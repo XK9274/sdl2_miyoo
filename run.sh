@@ -14,4 +14,4 @@ if [ ! -z "$1" ] && [ "$1" == "config" ]; then
     ./configure --disable-joystick-virtual --disable-power --disable-alsa --disable-diskaudio --disable-video-x11 --disable-video-wayland --disable-video-kmsdrm --disable-video-vulkan --disable-dbus --disable-ime --disable-fcitx --disable-hidapi --disable-pulseaudio --disable-sndio --disable-libudev --disable-jack --disable-video-opengl --disable-video-opengles --disable-video-opengles2 --disable-dummyaudio --disable-video-dummy --host=${HOST}
 fi
 
-make -j4 V=99
+make -j14 V=99

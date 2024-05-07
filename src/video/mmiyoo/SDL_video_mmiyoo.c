@@ -37,6 +37,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <json-c/json.h>
+#include "neon.h"
 
 #include "../../events/SDL_events_c.h"
 #include "../SDL_sysvideo.h"
@@ -56,6 +57,8 @@
 #include "SDL_framebuffer_mmiyoo.h"
 
 #include "hex_pen.h"
+
+void neon_memcpy(void *dest, const void *src, size_t n);
 
 MMIYOO_VideoInfo MMiyooVideoInfo={0};
 extern MMIYOO_EventInfo MMiyooEventInfo;
@@ -116,7 +119,7 @@ int GFX_Copy(const void *pixels, SDL_Rect srcrect, SDL_Rect dstrect, int pitch, 
     if (pixels == NULL) {
         return -1;
     }
-    memcpy(gfx.tmp.virAddr, pixels, srcrect.h * pitch);
+    neon_memcpy(gfx.tmp.virAddr, pixels, srcrect.h * pitch);
     
     gfx.hw.opt.u32GlobalSrcConstColor = 0;
     gfx.hw.opt.eRotate = rotate;
