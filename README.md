@@ -1,3 +1,18 @@
+# Warning:
+### The main branch of this fork is out of date. The branches are out of date but the `vanilla` branch has most of the NDS specific logic removed and can be used at runtime for various apps.
+### If your app uses TARGET textures, you will likely find they do NOT work for your application. 
+### To use these libs, use a STREAMING texture, blit everything to a surface and then update your final texture & rendercopy/present, an example of which is here:
+
+```c
+void RenderManagerSDL::refresh()
+{
+	SDL_RenderClear(mRenderer);
+	SDL_UpdateTexture(mRenderStreaming, NULL, mMiyooSurface->pixels, mMiyooSurface->pitch);
+	SDL_RenderCopy(mRenderer, mRenderStreaming, NULL, NULL);
+	SDL_RenderPresent(mRenderer);
+}
+```
+
 # SDL2 Library with Virtual GPU Support for Miyoo Mini (Plus) and TRIMUI SMART
  - [Miyoo Mini (Plus)](#miyoo-mini-plus)
    - Introduction
