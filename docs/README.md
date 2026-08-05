@@ -38,6 +38,7 @@ More documentation and FAQs are available online at [the wiki](http://wiki.libsd
 - [Git](README-git.md)
 - [iOS](README-ios.md)
 - [Linux](README-linux.md)
+- [Miyoo Mini](README-miyoo.md)
 - [OS X](README-macosx.md)
 - [OS/2](README-os2.md)
 - [Native Client](README-nacl.md)
