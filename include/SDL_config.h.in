@@ -444,6 +444,7 @@
 #undef SDL_POWER_ANDROID
 #undef SDL_POWER_EMSCRIPTEN
 #undef SDL_POWER_HARDWIRED
+#undef SDL_POWER_MMIYOO
 
 /* Enable system filesystem support */
 #undef SDL_FILESYSTEM_HAIKU

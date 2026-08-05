@@ -3911,6 +3911,11 @@ case "$host" in
                    SOURCES="$SOURCES $srcdir/src/power/android/*.c"
                    have_power=yes
                ;;
+               mmiyoo)
+                   AC_DEFINE(SDL_POWER_MMIYOO, 1, [ ])
+                   SOURCES="$SOURCES $srcdir/src/power/mmiyoo/*.c"
+                   have_power=yes
+               ;;
              esac
         fi
         # Set up files for the filesystem library
