@@ -325,12 +325,13 @@
 /* #undef SDL_JOYSTICK_RAWINPUT */
 /* #undef SDL_JOYSTICK_EMSCRIPTEN */
 /* #undef SDL_JOYSTICK_VIRTUAL */
-#define SDL_HAPTIC_DUMMY 1
+/* #undef SDL_HAPTIC_DUMMY */
 /* #undef SDL_HAPTIC_ANDROID */
 /* #undef SDL_HAPTIC_LINUX */
 /* #undef SDL_HAPTIC_IOKIT */
 /* #undef SDL_HAPTIC_DINPUT */
 /* #undef SDL_HAPTIC_XINPUT */
+#define SDL_HAPTIC_MMIYOO 1
 
 /* Enable various sensor drivers */
 /* #undef SDL_SENSOR_ANDROID */

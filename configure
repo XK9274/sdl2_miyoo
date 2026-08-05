@@ -26032,6 +26032,13 @@ $as_echo "#define SDL_HAPTIC_ANDROID 1" >>confdefs.h
                 SOURCES="$SOURCES $srcdir/src/haptic/android/*.c"
                 have_haptic=yes
             ;;
+            mmiyoo)
+
+$as_echo "#define SDL_HAPTIC_MMIYOO 1" >>confdefs.h
+
+                SOURCES="$SOURCES $srcdir/src/haptic/mmiyoo/*.c"
+                have_haptic=yes
+            ;;
           esac
         fi
         # Set up files for the sensor library

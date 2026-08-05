@@ -3881,6 +3881,11 @@ case "$host" in
                 SOURCES="$SOURCES $srcdir/src/haptic/android/*.c"
                 have_haptic=yes
             ;;
+            mmiyoo)
+                AC_DEFINE(SDL_HAPTIC_MMIYOO, 1, [ ])
+                SOURCES="$SOURCES $srcdir/src/haptic/mmiyoo/*.c"
+                have_haptic=yes
+            ;;
           esac
         fi
         # Set up files for the sensor library

@@ -386,6 +386,9 @@ $(objects)/SDL_audio_mmiyoo.lo: /workspace/sdl2/src/audio/mmiyoo/SDL_audio_mmiyo
 $(objects)/SDL_joystick_mmiyoo.lo: /workspace/sdl2/src/joystick/mmiyoo/SDL_joystick_mmiyoo.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
+$(objects)/SDL_syshaptic.lo: /workspace/sdl2/src/haptic/mmiyoo/SDL_syshaptic.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
 $(objects)/SDL_sysfilesystem.lo: /workspace/sdl2/src/filesystem/unix/SDL_sysfilesystem.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
@@ -408,9 +411,6 @@ $(objects)/SDL_threadprio.lo: /workspace/sdl2/src/core/linux/SDL_threadprio.c $(
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
 $(objects)/SDL_poll.lo: /workspace/sdl2/src/core/unix/SDL_poll.c $(objects)/.created
-	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
-
-$(objects)/SDL_syshaptic.lo: /workspace/sdl2/src/haptic/dummy/SDL_syshaptic.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
 $(objects)/SDL_dummysensor.lo: /workspace/sdl2/src/sensor/dummy/SDL_dummysensor.c $(objects)/.created
