@@ -1746,10 +1746,7 @@ int My_QueueCopy(SDL_Renderer *renderer,
         return 0;
     }
 
-    MMiyooEventInfo.mouse.minx = dst.x;
-    MMiyooEventInfo.mouse.miny = dst.y;
-    MMiyooEventInfo.mouse.maxx = MMiyooEventInfo.mouse.minx + dst.w;
-    MMiyooEventInfo.mouse.maxy = MMiyooEventInfo.mouse.miny + dst.h;
+    MMIYOO_SetMouseBounds(dst.x, dst.y, dst.x + dst.w, dst.y + dst.h);
     if (0 && (MMiyooEventInfo.mode == MMIYOO_MOUSE_MODE)) {
         draw_pen(pixels, src.w, pitch);
     }

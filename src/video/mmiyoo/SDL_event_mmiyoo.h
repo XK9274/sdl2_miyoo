@@ -25,7 +25,6 @@
 #define __SDL_EVENT_MMIYOO_H__
 
 #include "../../SDL_internal.h"
-#include "SDL_event_mmiyoo.h"
 
 #define MYKEY_UP            0
 #define MYKEY_DOWN          1
@@ -75,6 +74,6 @@ typedef struct _MMIYOO_EventInfo {
 extern void MMIYOO_EventInit(void);
 extern void MMIYOO_EventDeinit(void);
 extern void MMIYOO_PumpEvents(_THIS);
+extern void MMIYOO_SetMouseBounds(int minx, int miny, int maxx, int maxy);
 
 #endif
-

@@ -26,14 +26,15 @@
 
 #if SDL_VIDEO_DRIVER_MMIYOO
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <dirent.h>
 #include <linux/input.h>
+#include "SDL_atomic.h"
+#include "SDL_timer.h"
 #include "../../events/SDL_events_c.h"
-#include "../../core/linux/SDL_evdev.h"
 #include "../../thread/SDL_systhread.h"
 
 #include "SDL_video_mmiyoo.h"
@@ -43,12 +44,37 @@ MMIYOO_EventInfo MMiyooEventInfo = {0};
 
 extern MMIYOO_VideoInfo MMiyooVideoInfo;
 
-static int running = 0;
+static SDL_atomic_t running;
 static int event_fd = -1;
 static uint32_t pre_ticks = 0;
-static SDL_sem *event_sem = NULL;
+static SDL_mutex *event_mutex = NULL;
 static SDL_Thread *thread = NULL;
 static uint32_t pre_keypad_bitmaps = 0;
+
+static uint32_t keycode_to_miyoo_bit(int code)
+{
+    switch (code) {
+    case KEY_UP:        return (1 << MYKEY_UP);
+    case KEY_DOWN:      return (1 << MYKEY_DOWN);
+    case KEY_LEFT:      return (1 << MYKEY_LEFT);
+    case KEY_RIGHT:     return (1 << MYKEY_RIGHT);
+    case KEY_SPACE:     return (1 << MYKEY_A);
+    case KEY_LEFTCTRL:  return (1 << MYKEY_B);
+    case KEY_LEFTSHIFT: return (1 << MYKEY_X);
+    case KEY_LEFTALT:   return (1 << MYKEY_Y);
+    case KEY_ENTER:     return (1 << MYKEY_START);
+    case KEY_RIGHTCTRL: return (1 << MYKEY_SELECT);
+    case KEY_E:         return (1 << MYKEY_L1);
+    case KEY_TAB:       return (1 << MYKEY_L2);
+    case KEY_T:         return (1 << MYKEY_R1);
+    case KEY_BACKSPACE: return (1 << MYKEY_R2);
+    case KEY_ESC:       return (1 << MYKEY_MENU);
+    case KEY_POWER:     return (1 << MYKEY_POWER);
+    case KEY_VOLUMEUP:  return (1 << MYKEY_VOLUP);
+    case KEY_VOLUMEDOWN:return (1 << MYKEY_VOLDOWN);
+    default:  return 0;
+    }
+}
 
 static void check_mouse_pos(void)
 {
@@ -70,7 +96,7 @@ static int get_move_interval(int type)
 {
     float move = 0.0;
 
-    move = ((float)clock() - pre_ticks) / ((type == 0) ? 10000 : 12000);
+    move = ((float)(SDL_GetTicks() - pre_ticks)) / ((type == 0) ? 10.0f : 12.0f);
     if (move <= 0.0) {
         move = 1.0;
     }
@@ -79,53 +105,37 @@ static int get_move_interval(int type)
 
 int EventUpdate(void *data)
 {
-    uint32_t bit = 0;
     struct input_event ev = {0};
 
-    while (running) {
-        SDL_SemWait(event_sem);
-        if (event_fd > 0) {
-            if (read(event_fd, &ev, sizeof(struct input_event))) {
+    (void)data;
+
+    while (SDL_AtomicGet(&running)) {
+        if (event_fd >= 0) {
+            ssize_t bytes = 0;
+
+            while ((bytes = read(event_fd, &ev, sizeof(ev))) == sizeof(ev)) {
                 if ((ev.type == EV_KEY) && (ev.value != 2)) {
-                    //printf("%s, code:%d\n", __func__, ev.code);
+                    const uint32_t bit = keycode_to_miyoo_bit(ev.code);
 
-                    switch (ev.code) {
-                    case 103: bit = (1 << MYKEY_UP);      break;
-                    case 108: bit = (1 << MYKEY_DOWN);    break;
-                    case 105: bit = (1 << MYKEY_LEFT);    break;
-                    case 106: bit = (1 << MYKEY_RIGHT);   break;
-                    case 57:  bit = (1 << MYKEY_A);       break;
-                    case 29:  bit = (1 << MYKEY_B);       break;
-                    case 42:  bit = (1 << MYKEY_X);       break;
-                    case 56:  bit = (1 << MYKEY_Y);       break;
-                    case 28:  bit = (1 << MYKEY_START);   break;
-                    case 97:  bit = (1 << MYKEY_SELECT);  break;
-                    case 18:  bit = (1 << MYKEY_L1);      break;
-                    case 15:  bit = (1 << MYKEY_L2);      break;
-                    case 20:  bit = (1 << MYKEY_R1);      break;
-                    case 14:  bit = (1 << MYKEY_R2);      break;
-                    case 1:   bit = (1 << MYKEY_MENU);    break;
-                    case 116: bit = (1 << MYKEY_POWER);   break;
-                    case 115: bit = (1 << MYKEY_VOLUP);   break;
-                    case 114: bit = (1 << MYKEY_VOLDOWN); break;
-                    }
-
-                    if(bit){
-                        if(ev.value){
-                            MMiyooEventInfo.keypad.bitmaps|= bit;
+                    if (bit) {
+                        SDL_LockMutex(event_mutex);
+                        if (ev.value) {
+                            MMiyooEventInfo.keypad.bitmaps |= bit;
+                        } else {
+                            MMiyooEventInfo.keypad.bitmaps &= ~bit;
                         }
-                        else{
-                            MMiyooEventInfo.keypad.bitmaps&= ~bit;
+                        if (!(MMiyooEventInfo.keypad.bitmaps & 0x0f)) {
+                            pre_ticks = SDL_GetTicks();
                         }
+                        SDL_UnlockMutex(event_mutex);
                     }
-                }
-            
-                if (!(MMiyooEventInfo.keypad.bitmaps & 0x0f)) {
-                    pre_ticks = clock();
                 }
             }
+
+            if ((bytes < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
+                usleep(1000000 / 60);
+            }
         }
-        SDL_SemPost(event_sem);
         usleep(1000000 / 60);
     }
     
@@ -135,6 +145,7 @@ int EventUpdate(void *data)
 void MMIYOO_EventInit(void)
 {
     pre_keypad_bitmaps = 0;
+    pre_ticks = SDL_GetTicks();
     memset(&MMiyooEventInfo, 0, sizeof(MMiyooEventInfo));
     MMiyooEventInfo.mouse.minx = 0;
     MMiyooEventInfo.mouse.miny = 0;
@@ -151,93 +162,138 @@ void MMIYOO_EventInit(void)
     }
 #endif
 
-    if((event_sem =  SDL_CreateSemaphore(1)) == NULL) {
-        SDL_SetError("Can't create input semaphore");
+    if((event_mutex =  SDL_CreateMutex()) == NULL) {
+        SDL_SetError("Can't create input mutex");
+        if(event_fd >= 0) {
+            close(event_fd);
+            event_fd = -1;
+        }
         return;
     }
 
-    running = 1;
+    SDL_AtomicSet(&running, 1);
     if((thread = SDL_CreateThreadInternal(EventUpdate, "MMIYOOInputThread", 4096, NULL)) == NULL) {
         SDL_SetError("Can't create input thread");
+        SDL_AtomicSet(&running, 0);
+        SDL_DestroyMutex(event_mutex);
+        event_mutex = NULL;
+        if(event_fd >= 0) {
+            close(event_fd);
+            event_fd = -1;
+        }
         return;
     }
 }
 
 void MMIYOO_EventDeinit(void)
 {
-    running = 0;
-    SDL_WaitThread(thread, NULL);
-    SDL_DestroySemaphore(event_sem);
-    if(event_fd > 0) {
+    SDL_AtomicSet(&running, 0);
+    if(thread) {
+        SDL_WaitThread(thread, NULL);
+        thread = NULL;
+    }
+    if(event_mutex) {
+        SDL_DestroyMutex(event_mutex);
+        event_mutex = NULL;
+    }
+    if(event_fd >= 0) {
         close(event_fd);
         event_fd = -1;
     }
 }
 
+void MMIYOO_SetMouseBounds(int minx, int miny, int maxx, int maxy)
+{
+    if (event_mutex) {
+        SDL_LockMutex(event_mutex);
+    }
+    MMiyooEventInfo.mouse.minx = minx;
+    MMiyooEventInfo.mouse.miny = miny;
+    MMiyooEventInfo.mouse.maxx = maxx;
+    MMiyooEventInfo.mouse.maxy = maxy;
+    check_mouse_pos();
+    if (event_mutex) {
+        SDL_UnlockMutex(event_mutex);
+    }
+}
+
 void MMIYOO_PumpEvents(_THIS)
 {
-    const SDL_Scancode code[]={
+    const SDL_Keycode code[]={
         SDLK_UP, SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT,
         SDLK_SPACE, SDLK_LCTRL, SDLK_LSHIFT, SDLK_LALT,
         SDLK_e, SDLK_t, SDLK_TAB, SDLK_BACKSPACE,
         SDLK_RCTRL, SDLK_RETURN, SDLK_ESCAPE
     };
+    uint32_t keypad_bitmaps = 0;
+    int mode = MMIYOO_KEYPAD_MODE;
+    int mouse_x = 0;
+    int mouse_y = 0;
+    int send_motion = 0;
 
-    SDL_SemWait(event_sem);
-    if (MMiyooEventInfo.mode == MMIYOO_KEYPAD_MODE) {
-        if (pre_keypad_bitmaps != MMiyooEventInfo.keypad.bitmaps) {
+    if (!event_mutex) {
+        return;
+    }
+
+    SDL_LockMutex(event_mutex);
+    keypad_bitmaps = MMiyooEventInfo.keypad.bitmaps;
+    mode = MMiyooEventInfo.mode;
+    SDL_UnlockMutex(event_mutex);
+
+    if (mode == MMIYOO_KEYPAD_MODE) {
+        if (pre_keypad_bitmaps != keypad_bitmaps) {
             int cc = 0;
             uint32_t v0 = pre_keypad_bitmaps;
-            uint32_t v1 = MMiyooEventInfo.keypad.bitmaps;
+            uint32_t v1 = keypad_bitmaps;
 
-            for (cc=0; cc<=MYKEY_LAST_BITS; cc++) {
+            for (cc=0; cc<=MYKEY_LAST_BITS && cc < SDL_arraysize(code); cc++) {
                 if ((v0 & 1) != (v1 & 1)) {
                     SDL_SendKeyboardKey((v1 & 1) ? SDL_PRESSED : SDL_RELEASED, SDL_GetScancodeFromKey(code[cc]));
                 }
                 v0>>= 1;
                 v1>>= 1;
             }
-            pre_keypad_bitmaps = MMiyooEventInfo.keypad.bitmaps;
+            pre_keypad_bitmaps = keypad_bitmaps;
         }
     }
     else {
-        int updated = 0;
-        
-        if (pre_keypad_bitmaps != MMiyooEventInfo.keypad.bitmaps) {
+        if (pre_keypad_bitmaps != keypad_bitmaps) {
             uint32_t v0 = pre_keypad_bitmaps;
-            uint32_t v1 = MMiyooEventInfo.keypad.bitmaps;
+            uint32_t v1 = keypad_bitmaps;
 
             if ((v0 & (1 << MYKEY_A)) != (v1 & (1 << MYKEY_A))) {
                 SDL_SendMouseButton(MMiyooVideoInfo.window, 0, (v1 & (1 << MYKEY_A)) ? SDL_PRESSED : SDL_RELEASED, SDL_BUTTON_LEFT);
             }
         }
 
-        if (MMiyooEventInfo.keypad.bitmaps & (1 << MYKEY_UP)) {
-            updated = 1;
+        SDL_LockMutex(event_mutex);
+        if (keypad_bitmaps & (1 << MYKEY_UP)) {
+            send_motion = 1;
             MMiyooEventInfo.mouse.y-= get_move_interval(1);
         }
-        if (MMiyooEventInfo.keypad.bitmaps & (1 << MYKEY_DOWN)) {
-            updated = 1;
+        if (keypad_bitmaps & (1 << MYKEY_DOWN)) {
+            send_motion = 1;
             MMiyooEventInfo.mouse.y+= get_move_interval(1);
         }
-        if (MMiyooEventInfo.keypad.bitmaps & (1 << MYKEY_LEFT)) {
-            updated = 1;
+        if (keypad_bitmaps & (1 << MYKEY_LEFT)) {
+            send_motion = 1;
             MMiyooEventInfo.mouse.x-= get_move_interval(0);
         }
-        if (MMiyooEventInfo.keypad.bitmaps & (1 << MYKEY_RIGHT)) {
-            updated = 1;
+        if (keypad_bitmaps & (1 << MYKEY_RIGHT)) {
+            send_motion = 1;
             MMiyooEventInfo.mouse.x+= get_move_interval(0);
         }
         check_mouse_pos();
+        mouse_x = MMiyooEventInfo.mouse.x;
+        mouse_y = MMiyooEventInfo.mouse.y;
+        SDL_UnlockMutex(event_mutex);
 
-        if(updated){
-            SDL_SendMouseMotion(MMiyooVideoInfo.window, 0, 0, MMiyooEventInfo.mouse.x, MMiyooEventInfo.mouse.y);
+        if(send_motion){
+            SDL_SendMouseMotion(MMiyooVideoInfo.window, 0, 0, mouse_x, mouse_y);
         }
         
-        pre_keypad_bitmaps = MMiyooEventInfo.keypad.bitmaps;
+        pre_keypad_bitmaps = keypad_bitmaps;
     }
-    SDL_SemPost(event_sem);
 }
 
 #endif
-
