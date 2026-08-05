@@ -26,88 +26,10 @@
 
 #if defined(SDL_JOYSTICK_MMIYOO)
 
-#include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
-
 #include "SDL_joystick.h"
+#include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../SDL_sysjoystick.h"
 #include "../SDL_joystick_c.h"
-
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 0
-#endif
-
-#define MMIYOO_RUMBLE_GPIO "48"
-#define MMIYOO_RUMBLE_GPIO_DIR "/sys/class/gpio/gpio48"
-#define MMIYOO_RUMBLE_GPIO_DIRECTION MMIYOO_RUMBLE_GPIO_DIR "/direction"
-#define MMIYOO_RUMBLE_GPIO_VALUE MMIYOO_RUMBLE_GPIO_DIR "/value"
-
-static SDL_bool rumble_gpio_ready = SDL_FALSE;
-
-static int
-MMIYOO_WriteSysfs(const char *path, const char *value, size_t length)
-{
-    int fd;
-    int saved_errno;
-    ssize_t written;
-
-    fd = open(path, O_WRONLY | O_CLOEXEC);
-    if (fd < 0) {
-        return SDL_SetError("Unable to open %s: %s", path, strerror(errno));
-    }
-
-    written = write(fd, value, length);
-    saved_errno = errno;
-    close(fd);
-
-    if (written != (ssize_t)length) {
-        if (written >= 0) {
-            return SDL_SetError("Unable to write complete value to %s", path);
-        }
-        return SDL_SetError("Unable to write %s: %s", path, strerror(saved_errno));
-    }
-
-    return 0;
-}
-
-static int
-MMIYOO_InitRumbleGPIO(void)
-{
-    int result;
-
-    if (rumble_gpio_ready) {
-        return 0;
-    }
-
-    if (access(MMIYOO_RUMBLE_GPIO_DIR, F_OK) < 0) {
-        result = MMIYOO_WriteSysfs("/sys/class/gpio/export", MMIYOO_RUMBLE_GPIO, SDL_strlen(MMIYOO_RUMBLE_GPIO));
-        if (result < 0 && errno != EBUSY) {
-            return result;
-        }
-    }
-
-    result = MMIYOO_WriteSysfs(MMIYOO_RUMBLE_GPIO_DIRECTION, "out", 3);
-    if (result < 0) {
-        return result;
-    }
-
-    rumble_gpio_ready = SDL_TRUE;
-    return MMIYOO_WriteSysfs(MMIYOO_RUMBLE_GPIO_VALUE, "1", 1);
-}
-
-static int
-MMIYOO_SetRumble(SDL_bool enabled)
-{
-    int result;
-
-    result = MMIYOO_InitRumbleGPIO();
-    if (result < 0) {
-        return result;
-    }
-
-    return MMIYOO_WriteSysfs(MMIYOO_RUMBLE_GPIO_VALUE, enabled ? "0" : "1", 1);
-}
 
 static int MMIYOO_JoystickInit(void)
 {
@@ -183,7 +105,7 @@ static Uint32 MMIYOO_JoystickGetCapabilities(SDL_Joystick *joystick)
 {
     (void)joystick;
 
-    return (MMIYOO_InitRumbleGPIO() == 0) ? SDL_JOYCAP_RUMBLE : 0;
+    return MMIYOO_HasRumble() ? SDL_JOYCAP_RUMBLE : 0;
 }
 
 static int MMIYOO_JoystickSetLED(SDL_Joystick *joystick, Uint8 red, Uint8 green, Uint8 blue)

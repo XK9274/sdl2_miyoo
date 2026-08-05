@@ -3792,6 +3792,12 @@ case "$host" in
         SOURCES="$SOURCES $srcdir/src/locale/unix/*.c"
         have_locale=yes
 
+        case $ARCH in
+          mmiyoo)
+              SOURCES="$SOURCES $srcdir/src/core/mmiyoo/*.c"
+          ;;
+        esac
+
         # Set up files for the audio library
         if test x$enable_audio = xyes; then
           case $ARCH in
