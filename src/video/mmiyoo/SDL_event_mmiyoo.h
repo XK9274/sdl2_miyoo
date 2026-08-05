@@ -25,29 +25,30 @@
 #define __SDL_EVENT_MMIYOO_H__
 
 #include "../../SDL_internal.h"
+#include "../../core/mmiyoo/SDL_mmiyoo.h"
 
-#define MYKEY_UP            0
-#define MYKEY_DOWN          1
-#define MYKEY_LEFT          2
-#define MYKEY_RIGHT         3
-#define MYKEY_A             4
-#define MYKEY_B             5
-#define MYKEY_X             6
-#define MYKEY_Y             7
-#define MYKEY_L1            8
-#define MYKEY_R1            9
-#define MYKEY_L2            10
-#define MYKEY_R2            11
-#define MYKEY_SELECT        12
-#define MYKEY_START         13
-#define MYKEY_MENU          14
-#define MYKEY_QSAVE         15
-#define MYKEY_QLOAD         16
-#define MYKEY_FF            17
-#define MYKEY_EXIT          18
-#define MYKEY_POWER         19
-#define MYKEY_VOLUP         20
-#define MYKEY_VOLDOWN       21
+#define MYKEY_UP            MMIYOO_BUTTON_UP
+#define MYKEY_DOWN          MMIYOO_BUTTON_DOWN
+#define MYKEY_LEFT          MMIYOO_BUTTON_LEFT
+#define MYKEY_RIGHT         MMIYOO_BUTTON_RIGHT
+#define MYKEY_A             MMIYOO_BUTTON_A
+#define MYKEY_B             MMIYOO_BUTTON_B
+#define MYKEY_X             MMIYOO_BUTTON_X
+#define MYKEY_Y             MMIYOO_BUTTON_Y
+#define MYKEY_L1            MMIYOO_BUTTON_L1
+#define MYKEY_R1            MMIYOO_BUTTON_R1
+#define MYKEY_L2            MMIYOO_BUTTON_L2
+#define MYKEY_R2            MMIYOO_BUTTON_R2
+#define MYKEY_SELECT        MMIYOO_BUTTON_SELECT
+#define MYKEY_START         MMIYOO_BUTTON_START
+#define MYKEY_MENU          MMIYOO_BUTTON_MENU
+#define MYKEY_QSAVE         MMIYOO_BUTTON_QSAVE
+#define MYKEY_QLOAD         MMIYOO_BUTTON_QLOAD
+#define MYKEY_FF            MMIYOO_BUTTON_FF
+#define MYKEY_EXIT          MMIYOO_BUTTON_EXIT
+#define MYKEY_POWER         MMIYOO_BUTTON_POWER
+#define MYKEY_VOLUP         MMIYOO_BUTTON_VOLUP
+#define MYKEY_VOLDOWN       MMIYOO_BUTTON_VOLDOWN
 
 #define MYKEY_LAST_BITS     18 // ignore POWER, VOL-, VOL+ keys
 

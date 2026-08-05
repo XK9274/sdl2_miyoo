@@ -22,6 +22,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/input.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -120,6 +121,51 @@ MMIYOO_GetDeviceModel(void)
     }
 
     return MMIYOO_MODEL_UNKNOWN;
+}
+
+Uint32
+MMIYOO_KeycodeToButtonMask(int code)
+{
+    switch (code) {
+    case KEY_UP:
+        return (1u << MMIYOO_BUTTON_UP);
+    case KEY_DOWN:
+        return (1u << MMIYOO_BUTTON_DOWN);
+    case KEY_LEFT:
+        return (1u << MMIYOO_BUTTON_LEFT);
+    case KEY_RIGHT:
+        return (1u << MMIYOO_BUTTON_RIGHT);
+    case KEY_SPACE:
+        return (1u << MMIYOO_BUTTON_A);
+    case KEY_LEFTCTRL:
+        return (1u << MMIYOO_BUTTON_B);
+    case KEY_LEFTSHIFT:
+        return (1u << MMIYOO_BUTTON_X);
+    case KEY_LEFTALT:
+        return (1u << MMIYOO_BUTTON_Y);
+    case KEY_ENTER:
+        return (1u << MMIYOO_BUTTON_START);
+    case KEY_RIGHTCTRL:
+        return (1u << MMIYOO_BUTTON_SELECT);
+    case KEY_E:
+        return (1u << MMIYOO_BUTTON_L1);
+    case KEY_TAB:
+        return (1u << MMIYOO_BUTTON_L2);
+    case KEY_T:
+        return (1u << MMIYOO_BUTTON_R1);
+    case KEY_BACKSPACE:
+        return (1u << MMIYOO_BUTTON_R2);
+    case KEY_ESC:
+        return (1u << MMIYOO_BUTTON_MENU);
+    case KEY_POWER:
+        return (1u << MMIYOO_BUTTON_POWER);
+    case KEY_VOLUMEUP:
+        return (1u << MMIYOO_BUTTON_VOLUP);
+    case KEY_VOLUMEDOWN:
+        return (1u << MMIYOO_BUTTON_VOLDOWN);
+    default:
+        return 0;
+    }
 }
 
 static int

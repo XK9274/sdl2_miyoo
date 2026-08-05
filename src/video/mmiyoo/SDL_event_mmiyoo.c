@@ -51,31 +51,6 @@ static SDL_mutex *event_mutex = NULL;
 static SDL_Thread *thread = NULL;
 static uint32_t pre_keypad_bitmaps = 0;
 
-static uint32_t keycode_to_miyoo_bit(int code)
-{
-    switch (code) {
-    case KEY_UP:        return (1 << MYKEY_UP);
-    case KEY_DOWN:      return (1 << MYKEY_DOWN);
-    case KEY_LEFT:      return (1 << MYKEY_LEFT);
-    case KEY_RIGHT:     return (1 << MYKEY_RIGHT);
-    case KEY_SPACE:     return (1 << MYKEY_A);
-    case KEY_LEFTCTRL:  return (1 << MYKEY_B);
-    case KEY_LEFTSHIFT: return (1 << MYKEY_X);
-    case KEY_LEFTALT:   return (1 << MYKEY_Y);
-    case KEY_ENTER:     return (1 << MYKEY_START);
-    case KEY_RIGHTCTRL: return (1 << MYKEY_SELECT);
-    case KEY_E:         return (1 << MYKEY_L1);
-    case KEY_TAB:       return (1 << MYKEY_L2);
-    case KEY_T:         return (1 << MYKEY_R1);
-    case KEY_BACKSPACE: return (1 << MYKEY_R2);
-    case KEY_ESC:       return (1 << MYKEY_MENU);
-    case KEY_POWER:     return (1 << MYKEY_POWER);
-    case KEY_VOLUMEUP:  return (1 << MYKEY_VOLUP);
-    case KEY_VOLUMEDOWN:return (1 << MYKEY_VOLDOWN);
-    default:  return 0;
-    }
-}
-
 static void check_mouse_pos(void)
 {
     if (MMiyooEventInfo.mouse.y < MMiyooEventInfo.mouse.miny) {
@@ -115,7 +90,7 @@ int EventUpdate(void *data)
 
             while ((bytes = read(event_fd, &ev, sizeof(ev))) == sizeof(ev)) {
                 if ((ev.type == EV_KEY) && (ev.value != 2)) {
-                    const uint32_t bit = keycode_to_miyoo_bit(ev.code);
+                    const uint32_t bit = MMIYOO_KeycodeToButtonMask(ev.code);
 
                     if (bit) {
                         SDL_LockMutex(event_mutex);

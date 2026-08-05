@@ -30,10 +30,39 @@ typedef enum {
     MMIYOO_MODEL_PLUS = 354
 } MMIYOO_DeviceModel;
 
+typedef enum {
+    MMIYOO_BUTTON_UP = 0,
+    MMIYOO_BUTTON_DOWN,
+    MMIYOO_BUTTON_LEFT,
+    MMIYOO_BUTTON_RIGHT,
+    MMIYOO_BUTTON_A,
+    MMIYOO_BUTTON_B,
+    MMIYOO_BUTTON_X,
+    MMIYOO_BUTTON_Y,
+    MMIYOO_BUTTON_L1,
+    MMIYOO_BUTTON_R1,
+    MMIYOO_BUTTON_L2,
+    MMIYOO_BUTTON_R2,
+    MMIYOO_BUTTON_SELECT,
+    MMIYOO_BUTTON_START,
+    MMIYOO_BUTTON_MENU,
+    MMIYOO_BUTTON_QSAVE,
+    MMIYOO_BUTTON_QLOAD,
+    MMIYOO_BUTTON_FF,
+    MMIYOO_BUTTON_EXIT,
+    MMIYOO_BUTTON_POWER,
+    MMIYOO_BUTTON_VOLUP,
+    MMIYOO_BUTTON_VOLDOWN
+} MMIYOO_Button;
+
+#define MMIYOO_BUTTON_LAST MMIYOO_BUTTON_MENU
+#define MMIYOO_BUTTON_COUNT (MMIYOO_BUTTON_LAST + 1)
+
 extern int MMIYOO_WriteSysfs(const char *path, const char *value, size_t length);
 extern SDL_bool MMIYOO_ReadIntFile(const char *path, int *value);
 
 extern MMIYOO_DeviceModel MMIYOO_GetDeviceModel(void);
+extern Uint32 MMIYOO_KeycodeToButtonMask(int code);
 
 extern SDL_bool MMIYOO_HasRumble(void);
 extern int MMIYOO_SetRumble(SDL_bool enabled);

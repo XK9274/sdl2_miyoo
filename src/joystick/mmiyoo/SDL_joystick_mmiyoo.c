@@ -26,13 +26,43 @@
 
 #if defined(SDL_JOYSTICK_MMIYOO)
 
+#include <errno.h>
+#include <fcntl.h>
+#include <linux/input.h>
+#include <unistd.h>
+
+#include "SDL_events.h"
+#include "SDL_gamecontroller.h"
 #include "SDL_joystick.h"
 #include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../SDL_sysjoystick.h"
 #include "../SDL_joystick_c.h"
 
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 0
+#endif
+
+#define MMIYOO_INPUT_DEVICE "/dev/input/event0"
+#define MMIYOO_AXIS_MIN -32768
+#define MMIYOO_AXIS_MAX 32767
+
+static int event_fd = -1;
+static Uint32 button_state = 0;
+static Uint32 previous_button_state = 0;
+static Sint16 previous_axis_x = 0;
+static Sint16 previous_axis_y = 0;
+
 static int MMIYOO_JoystickInit(void)
 {
+    button_state = 0;
+    previous_button_state = 0;
+    previous_axis_x = 0;
+    previous_axis_y = 0;
+
+#if defined(MMIYOO)
+    event_fd = open(MMIYOO_INPUT_DEVICE, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+#endif
+
     return 1;
 }
 
@@ -77,7 +107,7 @@ static int MMIYOO_JoystickOpen(SDL_Joystick *joystick, int device_index)
 {
     (void)device_index;
 
-    joystick->nbuttons = 14;
+    joystick->nbuttons = MMIYOO_BUTTON_COUNT;
     joystick->naxes = 2;
     joystick->nhats = 0;
 
@@ -125,20 +155,155 @@ static int MMIYOO_JoystickSetSensorsEnabled(SDL_Joystick *joystick, SDL_bool ena
 
 static void MMIYOO_JoystickUpdate(SDL_Joystick *joystick)
 {
+    struct input_event ev;
+    ssize_t bytes;
+    Uint32 changed;
+    Sint16 axis_x;
+    Sint16 axis_y;
+    SDL_bool left;
+    SDL_bool right;
+    SDL_bool up;
+    SDL_bool down;
+    int i;
+
+    if (event_fd >= 0) {
+        while ((bytes = read(event_fd, &ev, sizeof(ev))) == sizeof(ev)) {
+            if ((ev.type == EV_KEY) && (ev.value != 2)) {
+                const Uint32 bit = MMIYOO_KeycodeToButtonMask(ev.code);
+
+                if (bit) {
+                    if (ev.value) {
+                        button_state |= bit;
+                    } else {
+                        button_state &= ~bit;
+                    }
+                }
+            }
+        }
+
+        if ((bytes < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
+            close(event_fd);
+            event_fd = -1;
+        }
+    }
+
+    changed = previous_button_state ^ button_state;
+    if (changed) {
+        for (i = 0; i < MMIYOO_BUTTON_COUNT; ++i) {
+            const Uint32 bit = (1u << i);
+
+            if (changed & bit) {
+                SDL_PrivateJoystickButton(joystick, (Uint8)i, (button_state & bit) ? SDL_PRESSED : SDL_RELEASED);
+            }
+        }
+        previous_button_state = button_state;
+    }
+
+    left = (button_state & (1u << MMIYOO_BUTTON_LEFT)) ? SDL_TRUE : SDL_FALSE;
+    right = (button_state & (1u << MMIYOO_BUTTON_RIGHT)) ? SDL_TRUE : SDL_FALSE;
+    up = (button_state & (1u << MMIYOO_BUTTON_UP)) ? SDL_TRUE : SDL_FALSE;
+    down = (button_state & (1u << MMIYOO_BUTTON_DOWN)) ? SDL_TRUE : SDL_FALSE;
+
+    axis_x = 0;
+    if (left && !right) {
+        axis_x = MMIYOO_AXIS_MIN;
+    } else if (right && !left) {
+        axis_x = MMIYOO_AXIS_MAX;
+    }
+
+    axis_y = 0;
+    if (up && !down) {
+        axis_y = MMIYOO_AXIS_MIN;
+    } else if (down && !up) {
+        axis_y = MMIYOO_AXIS_MAX;
+    }
+
+    if (axis_x != previous_axis_x) {
+        SDL_PrivateJoystickAxis(joystick, 0, axis_x);
+        previous_axis_x = axis_x;
+    }
+    if (axis_y != previous_axis_y) {
+        SDL_PrivateJoystickAxis(joystick, 1, axis_y);
+        previous_axis_y = axis_y;
+    }
 }
 
 static void MMIYOO_JoystickClose(SDL_Joystick *joystick)
 {
+    int i;
+
+    for (i = 0; i < MMIYOO_BUTTON_COUNT; ++i) {
+        if (button_state & (1u << i)) {
+            SDL_PrivateJoystickButton(joystick, (Uint8)i, SDL_RELEASED);
+        }
+    }
+    if (previous_axis_x != 0) {
+        SDL_PrivateJoystickAxis(joystick, 0, 0);
+    }
+    if (previous_axis_y != 0) {
+        SDL_PrivateJoystickAxis(joystick, 1, 0);
+    }
+    button_state = 0;
+    previous_button_state = 0;
+    previous_axis_x = 0;
+    previous_axis_y = 0;
 }
 
 static void MMIYOO_JoystickQuit(void)
 {
+    if (event_fd >= 0) {
+        close(event_fd);
+        event_fd = -1;
+    }
+    button_state = 0;
+    previous_button_state = 0;
+    previous_axis_x = 0;
+    previous_axis_y = 0;
     MMIYOO_SetRumble(SDL_FALSE);
 }
 
 static SDL_bool MMIYOO_JoystickGetGamepadMapping(int device_index, SDL_GamepadMapping *out)
 {
-    return SDL_FALSE;
+    (void)device_index;
+
+    SDL_zero(*out);
+
+    out->a.kind = EMappingKind_Button;
+    out->a.target = MMIYOO_BUTTON_A;
+    out->b.kind = EMappingKind_Button;
+    out->b.target = MMIYOO_BUTTON_B;
+    out->x.kind = EMappingKind_Button;
+    out->x.target = MMIYOO_BUTTON_X;
+    out->y.kind = EMappingKind_Button;
+    out->y.target = MMIYOO_BUTTON_Y;
+    out->back.kind = EMappingKind_Button;
+    out->back.target = MMIYOO_BUTTON_SELECT;
+    out->guide.kind = EMappingKind_Button;
+    out->guide.target = MMIYOO_BUTTON_MENU;
+    out->start.kind = EMappingKind_Button;
+    out->start.target = MMIYOO_BUTTON_START;
+    out->leftshoulder.kind = EMappingKind_Button;
+    out->leftshoulder.target = MMIYOO_BUTTON_L1;
+    out->rightshoulder.kind = EMappingKind_Button;
+    out->rightshoulder.target = MMIYOO_BUTTON_R1;
+    out->lefttrigger.kind = EMappingKind_Button;
+    out->lefttrigger.target = MMIYOO_BUTTON_L2;
+    out->righttrigger.kind = EMappingKind_Button;
+    out->righttrigger.target = MMIYOO_BUTTON_R2;
+    out->dpup.kind = EMappingKind_Button;
+    out->dpup.target = MMIYOO_BUTTON_UP;
+    out->dpdown.kind = EMappingKind_Button;
+    out->dpdown.target = MMIYOO_BUTTON_DOWN;
+    out->dpleft.kind = EMappingKind_Button;
+    out->dpleft.target = MMIYOO_BUTTON_LEFT;
+    out->dpright.kind = EMappingKind_Button;
+    out->dpright.target = MMIYOO_BUTTON_RIGHT;
+    out->leftx.kind = EMappingKind_Axis;
+    out->leftx.target = 0;
+    out->lefty.kind = EMappingKind_Axis;
+    out->lefty.target = 1;
+
+    return SDL_TRUE;
 }
 
 SDL_JoystickDriver SDL_MMIYOO_JoystickDriver = {
