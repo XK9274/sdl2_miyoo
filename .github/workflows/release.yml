@@ -1,0 +1,247 @@
+name: Release SDL2 (Miyoo Mini)
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v2.0.22-miyoo1)"
+        required: true
+        type: string
+
+jobs:
+  preflight:
+    name: Pre-release checks
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "Tag '$TAG' does not match vMAJOR.MINOR.PATCH format"
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG"
+
+      - name: Verify tag exists on a tracked branch
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          BRANCHES=$(git branch -r --contains "HEAD" 2>/dev/null || true)
+          if [[ -z "$BRANCHES" ]]; then
+            echo "Warning: could not determine containing branches — proceeding"
+          else
+            echo "Tag is reachable from: $BRANCHES"
+          fi
+
+      - name: Check for uncommitted changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "Working tree is dirty — release must be built from a clean tree"
+            git status
+            exit 1
+          fi
+
+      - name: Check tag is not a duplicate release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release '$TAG' already exists — bump the version"
+            exit 1
+          fi
+
+      - name: Verify build-scripts/mk_miyoo.sh is present
+        run: |
+          if [[ ! -f "build-scripts/mk_miyoo.sh" ]]; then
+            echo "build-scripts/mk_miyoo.sh missing from repo"
+            exit 1
+          fi
+
+      - name: Verify autogen.sh is present
+        run: |
+          if [[ ! -f "autogen.sh" ]]; then
+            echo "autogen.sh missing — source tree is incomplete"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    needs: preflight
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout SDL2 source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            autoconf automake libtool pkg-config \
+            make gcc g++ \
+            git wget
+
+      - name: Install miyoomini toolchain
+        run: |
+          ARCH=$(uname -m)
+          if [[ "$ARCH" == "aarch64" ]]; then
+            REPO=miyoomini-toolchain-buildroot-aarch64
+          else
+            REPO=miyoomini-toolchain-buildroot
+          fi
+          wget -q "https://github.com/shauninman/$REPO/releases/download/v0.0.3/miyoomini-toolchain.tar.xz" -O /tmp/toolchain.tar.xz
+          sudo tar -xf /tmp/toolchain.tar.xz -C /opt
+          rm /tmp/toolchain.tar.xz
+
+      - name: Build neon helper library
+        run: |
+          git clone --depth=1 https://github.com/XK9274/neon-arm-library-miyoo.git /tmp/neon-arm-library-miyoo
+          cd /tmp/neon-arm-library-miyoo
+
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          CROSS="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-"
+          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
+
+          make CC="${CROSS}gcc" AR="${CROSS}ar"
+          cp -f libneonarmmiyoo.so "$GITHUB_WORKSPACE/"
+          cp -f libneonarmmiyoo.a  "$GITHUB_WORKSPACE/"
+
+      - name: Configure SDL2
+        run: |
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          SDL_DIR="$GITHUB_WORKSPACE"
+
+          export CROSS="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-"
+          export CC="${CROSS}gcc"
+          export CXX="${CROSS}g++"
+          export AR="${CROSS}ar"
+          export AS="${CROSS}as"
+          export LD="${CROSS}ld"
+          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
+          export MOD=mmiyoo
+
+          cd "$SDL_DIR"
+          chmod -R a+wx . >/dev/null 2>&1 || true
+          ./autogen.sh
+
+          CPPFLAGS="-DMMIYOO -I${SDL_DIR}/include -I${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/include" \
+          CFLAGS="-O2" \
+          LDFLAGS="-s -L${SDL_DIR} -L${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/lib" \
+          LIBS="-lmi_sys -lmi_gfx -lmi_ao -lcam_os_wrapper -ldl" \
+          ./configure \
+            --host=arm-linux-gnueabihf \
+            --disable-joystick-virtual \
+            --disable-power \
+            --disable-alsa \
+            --disable-diskaudio \
+            --disable-video-x11 \
+            --disable-video-wayland \
+            --disable-video-kmsdrm \
+            --disable-video-vulkan \
+            --disable-dbus \
+            --disable-ime \
+            --disable-fcitx \
+            --disable-hidapi \
+            --disable-pulseaudio \
+            --disable-sndio \
+            --disable-libudev \
+            --disable-jack \
+            --disable-video-opengl \
+            --disable-oss \
+            --disable-dummyaudio \
+            --disable-video-dummy \
+            --disable-debug \
+            --disable-video-opengles \
+            --disable-video-opengles2
+
+      - name: Build SDL2
+        run: |
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
+          cd "$GITHUB_WORKSPACE"
+          make -j$(nproc) V=99
+
+      - name: Extract artifact
+        run: |
+          LIB="${{ github.workspace }}/sdl2_miyoo/build/.libs/libSDL2-2.0.so.0.18.2"
+          if [[ ! -f "$LIB" ]]; then
+            echo "Build output not found at $LIB"
+            find "${{ github.workspace }}/sdl2_miyoo/build" -name "libSDL2*" 2>/dev/null || true
+            exit 1
+          fi
+          mkdir -p "${{ github.workspace }}/output"
+          cp "$LIB" "${{ github.workspace }}/output/libSDL2-2.0.so.0"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libSDL2-miyoo-${{ needs.preflight.outputs.tag }}
+          path: output/libSDL2-2.0.so.0
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: libSDL2-miyoo-${{ needs.preflight.outputs.tag }}
+          path: output
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.preflight.outputs.tag }}"
+          VERSION="${{ needs.preflight.outputs.version }}"
+
+          gh release create "$TAG" \
+            output/libSDL2-2.0.so.0 \
+            --title "SDL2 Miyoo Mini $TAG" \
+            --notes "$(cat <<NOTES
+          ## SDL2 for Miyoo Mini — $TAG
+
+          Cross-compiled for \`arm-linux-gnueabihf\` using the miyoomini-toolchain.
+
+          ### Artifact
+          | File | Description |
+          |------|-------------|
+          | \`libSDL2-2.0.so.0\` | Stripped release build |
+
+          ### Build info
+          - Commit: ${{ github.sha }}
+          - Toolchain: [XK9274/union-miyoomini-toolchain](https://github.com/XK9274/union-miyoomini-toolchain)
+          - Neon helper: [XK9274/neon-arm-library-miyoo](https://github.com/XK9274/neon-arm-library-miyoo)
+          NOTES
+          )"

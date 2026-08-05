@@ -1,0 +1,167 @@
+name: Build SDL2 (Miyoo Mini)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout SDL2 source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            autoconf automake libtool pkg-config \
+            make gcc g++ \
+            git wget
+
+      - name: Install miyoomini toolchain
+        run: |
+          ARCH=$(uname -m)
+          if [[ "$ARCH" == "aarch64" ]]; then
+            REPO=miyoomini-toolchain-buildroot-aarch64
+          else
+            REPO=miyoomini-toolchain-buildroot
+          fi
+          # Thankyou https://github.com/shauninman for the toolchains you created for the community
+          wget -q "https://github.com/shauninman/$REPO/releases/download/v0.0.3/miyoomini-toolchain.tar.xz" -O /tmp/toolchain.tar.xz
+          sudo mkdir -p /opt
+          sudo tar -xf /tmp/toolchain.tar.xz -C /opt
+          rm /tmp/toolchain.tar.xz
+          echo "Toolchain installed at /opt/miyoomini-toolchain"
+          ls /opt/miyoomini-toolchain/
+
+      - name: Build neon helper library
+        run: |
+          git clone --depth=1 https://github.com/XK9274/neon-arm-library-miyoo.git /tmp/neon-arm-library-miyoo
+          cd /tmp/neon-arm-library-miyoo
+
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          CROSS="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-"
+          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
+
+          make CC="${CROSS}gcc" AR="${CROSS}ar" AS="${CROSS}as" LD="${CROSS}ld" CROSS_COMPILE="$CROSS"
+          cp -f lib/libneonarmmiyoo.so "$GITHUB_WORKSPACE/"
+          cp -f lib/libneonarmmiyoo.a  "$GITHUB_WORKSPACE/"
+
+      - name: Configure SDL2
+        run: |
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          SDL_DIR="$GITHUB_WORKSPACE"
+
+          export CROSS="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-"
+          export CC="${CROSS}gcc"
+          export CXX="${CROSS}g++"
+          export AR="${CROSS}ar"
+          export AS="${CROSS}as"
+          export LD="${CROSS}ld"
+          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
+          export MOD=mmiyoo
+
+          chmod -R a+wx "$SDL_DIR" >/dev/null 2>&1 || true
+          cd "$SDL_DIR"
+          rm -f Makefile config.status config.log sdl2-config sdl2.pc
+          rm -rf build/
+          ./autogen.sh
+
+          CPPFLAGS="-DMMIYOO -I${SDL_DIR}/include -I${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/include" \
+          CFLAGS="-O2" \
+          LDFLAGS="-s -L${SDL_DIR} -L${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/lib" \
+          LIBS="-lmi_sys -lmi_gfx -lmi_ao -lcam_os_wrapper -ldl" \
+          ./configure \
+            --host=arm-linux-gnueabihf \
+            --disable-joystick-virtual \
+            --disable-power \
+            --disable-alsa \
+            --disable-diskaudio \
+            --disable-video-x11 \
+            --disable-video-wayland \
+            --disable-video-kmsdrm \
+            --disable-video-vulkan \
+            --disable-dbus \
+            --disable-ime \
+            --disable-fcitx \
+            --disable-hidapi \
+            --disable-pulseaudio \
+            --disable-sndio \
+            --disable-libudev \
+            --disable-jack \
+            --disable-video-opengl \
+            --disable-oss \
+            --disable-dummyaudio \
+            --disable-video-dummy \
+            --disable-debug \
+            --disable-video-opengles \
+            --disable-video-opengles2
+
+      - name: Build SDL2
+        run: |
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
+          cd "$GITHUB_WORKSPACE"
+          make -j$(nproc) V=99
+
+      - name: Extract artifact
+        run: |
+          LIB="$GITHUB_WORKSPACE/build/.libs/libSDL2-2.0.so.0.18.2"
+          if [[ ! -f "$LIB" ]]; then
+            echo "Build output not found at $LIB"
+            find "$GITHUB_WORKSPACE/build" -name "libSDL2*" 2>/dev/null || true
+            exit 1
+          fi
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          STRIP="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-strip"
+          mkdir -p "$GITHUB_WORKSPACE/output"
+          cp "$LIB" "$GITHUB_WORKSPACE/output/libSDL2-2.0.so.0"
+          "$STRIP" --strip-all "$GITHUB_WORKSPACE/output/libSDL2-2.0.so.0"
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "Local run: artifact deposited to $GITHUB_WORKSPACE/output/libSDL2-2.0.so.0"
+          else
+            echo "CI run: artifact ready at output/libSDL2-2.0.so.0 for upload step"
+          fi
+
+      - name: Build info
+        run: |
+          LIB="$GITHUB_WORKSPACE/output/libSDL2-2.0.so.0"
+          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
+          READELF="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-readelf"
+
+          echo "========================================"
+          echo " SDL2 Miyoo Mini — Build Summary"
+          echo "========================================"
+          echo ""
+          echo "  File     : $LIB"
+          if [[ "${ACT:-}" == "true" ]]; then
+            echo "  Local    : $LIB"
+          fi
+          echo "  Size     : $(du -sh "$LIB" | cut -f1) ($(stat -c%s "$LIB") bytes)"
+          echo "  Modified : $(stat -c '%y' "$LIB")"
+          echo ""
+          echo "--- File type ---"
+          file "$LIB"
+          echo ""
+          echo "--- Architecture (ELF header) ---"
+          "$READELF" -h "$LIB" | grep -E "Class|Data|Machine|Flags|Type"
+          echo ""
+          echo "--- Compiler / build info ---"
+          "$READELF" -p .comment "$LIB" 2>/dev/null | grep -v "^$" || echo "  (no .comment section)"
+          echo ""
+          echo "--- Dynamic dependencies ---"
+          "$READELF" -d "$LIB" | grep NEEDED || echo "  (none)"
+          echo "========================================"
+
+      - name: Upload artifact
+        if: ${{ env.ACT != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: libSDL2-miyoo-${{ github.sha }}
+          path: output/libSDL2-2.0.so.0
+          if-no-files-found: error
