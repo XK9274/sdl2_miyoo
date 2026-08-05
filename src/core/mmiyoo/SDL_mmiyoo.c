@@ -23,11 +23,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include <linux/fb.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 #include "SDL_error.h"
+#include "SDL_pixels.h"
 #include "SDL_mmiyoo.h"
 
 #ifndef O_CLOEXEC
@@ -166,6 +168,78 @@ MMIYOO_KeycodeToButtonMask(int code)
     default:
         return 0;
     }
+}
+
+void
+MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info)
+{
+    if (!info) {
+        return;
+    }
+
+    info->width = MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH;
+    info->height = MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT;
+    info->bytes_per_pixel = MMIYOO_DEFAULT_FRAMEBUFFER_BYTES_PER_PIXEL;
+    info->stride = info->width * info->bytes_per_pixel;
+    info->active_size = info->stride * info->height;
+    info->sdl_format = SDL_PIXELFORMAT_ARGB8888;
+}
+
+SDL_bool
+MMIYOO_GetFramebufferInfoFromFD(int fb_fd, MMIYOO_FramebufferInfo *info)
+{
+    struct fb_var_screeninfo vinfo;
+    struct fb_fix_screeninfo finfo;
+    SDL_bool have_vinfo;
+    SDL_bool have_finfo;
+
+    if (!info) {
+        return SDL_FALSE;
+    }
+
+    MMIYOO_GetDefaultFramebufferInfo(info);
+
+    if (fb_fd < 0) {
+        return SDL_FALSE;
+    }
+
+    SDL_zero(vinfo);
+    SDL_zero(finfo);
+    have_vinfo = (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) == 0) ? SDL_TRUE : SDL_FALSE;
+    have_finfo = (ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) == 0) ? SDL_TRUE : SDL_FALSE;
+
+    if (!have_vinfo && !have_finfo) {
+        return SDL_FALSE;
+    }
+
+    if (have_vinfo) {
+        if (vinfo.xres > 0) {
+            info->width = (int)vinfo.xres;
+        }
+        if (vinfo.yres > 0) {
+            info->height = (int)vinfo.yres;
+        }
+        if (vinfo.bits_per_pixel > 0) {
+            info->bytes_per_pixel = (int)((vinfo.bits_per_pixel + 7) / 8);
+            if (info->bytes_per_pixel <= 0) {
+                info->bytes_per_pixel = MMIYOO_DEFAULT_FRAMEBUFFER_BYTES_PER_PIXEL;
+            }
+            info->sdl_format = (vinfo.bits_per_pixel == 16) ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_ARGB8888;
+        }
+    }
+
+    if (have_finfo && finfo.line_length > 0) {
+        info->stride = (int)finfo.line_length;
+    } else {
+        info->stride = info->width * info->bytes_per_pixel;
+    }
+
+    info->active_size = info->stride * info->height;
+    if (info->active_size <= 0) {
+        info->active_size = info->width * info->height * info->bytes_per_pixel;
+    }
+
+    return SDL_TRUE;
 }
 
 static int

@@ -39,6 +39,7 @@
 #include "SDL_log.h"
 #include "SDL_stdinc.h"
 #include "../SDL_sysrender.h"
+#include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../../video/mmiyoo/SDL_video_mmiyoo.h"
 #include "../../video/mmiyoo/SDL_event_mmiyoo.h"
 #include "SDL_rect.h"
@@ -58,9 +59,6 @@ static int mmiyoo_texture_live_count = 0;
             MMIYOO_LOG_DEBUG(fmt, ##__VA_ARGS__);             \
         }                                                     \
     } while (0)
-
-#define MMIYOO_RENDERER_FALLBACK_WIDTH 640
-#define MMIYOO_RENDERER_FALLBACK_HEIGHT 480
 
 #define MAX_BATCH_SIZE 512
 
@@ -2512,10 +2510,10 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
             data->framebuffer_height = window_h;
         }
         if (data->framebuffer_width <= 0) {
-            data->framebuffer_width = MMIYOO_RENDERER_FALLBACK_WIDTH;
+            data->framebuffer_width = MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH;
         }
         if (data->framebuffer_height <= 0) {
-            data->framebuffer_height = MMIYOO_RENDERER_FALLBACK_HEIGHT;
+            data->framebuffer_height = MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT;
         }
     }
 

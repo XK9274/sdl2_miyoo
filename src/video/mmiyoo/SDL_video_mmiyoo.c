@@ -48,6 +48,7 @@
 #include <execinfo.h>
 
 #include "../../events/SDL_events_c.h"
+#include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../SDL_sysvideo.h"
 #include "../SDL_sysvideo.h"
 #include "../SDL_pixels_c.h"
@@ -74,54 +75,26 @@ static int g_framebuffer_stride = 0;
 static int g_framebuffer_bytes_per_pixel = 4;
 static int g_framebuffer_size = 0;
 static int g_tmp_buffer_size = 0;
+static Uint32 g_framebuffer_format = SDL_PIXELFORMAT_ARGB8888;
 
 #define GFX_ACTION_NONE 0
 #define GFX_ACTION_FLIP 1
 
-#define MMIYOO_DEFAULT_WIDTH  640
-#define MMIYOO_DEFAULT_HEIGHT 480
-
-static inline Uint32
-MMIYOO_FrameBytesPerPixel(void)
-{
-    Uint32 bpp = 0;
-    if (gfx.vinfo.bits_per_pixel > 0) {
-        bpp = (Uint32)((gfx.vinfo.bits_per_pixel + 7) / 8);
-    }
-    if (bpp == 0) {
-        bpp = 4;
-    }
-    return bpp;
-}
-
-static inline Uint32
-MMIYOO_FrameStrideBytes(Uint32 bytes_per_pixel)
-{
-    if (gfx.finfo.line_length > 0) {
-        return gfx.finfo.line_length;
-    }
-    if (gfx.vinfo.xres > 0) {
-        return gfx.vinfo.xres * bytes_per_pixel;
-    }
-    return MMIYOO_DEFAULT_WIDTH * bytes_per_pixel;
-}
-
 static void
 MMIYOO_UpdateFramebufferMetrics(void)
 {
-    Uint32 bytes_per_pixel = MMIYOO_FrameBytesPerPixel();
-    Uint32 stride_bytes = MMIYOO_FrameStrideBytes(bytes_per_pixel);
-    Uint32 width = (gfx.vinfo.xres > 0) ? gfx.vinfo.xres : MMIYOO_DEFAULT_WIDTH;
-    Uint32 height = (gfx.vinfo.yres > 0) ? gfx.vinfo.yres : MMIYOO_DEFAULT_HEIGHT;
+    MMIYOO_FramebufferInfo info;
 
-    g_framebuffer_width = (int)width;
-    g_framebuffer_height = (int)height;
-    g_framebuffer_bytes_per_pixel = (int)bytes_per_pixel;
-    g_framebuffer_stride = (int)stride_bytes;
-    g_framebuffer_size = stride_bytes * height;
-    if ((Uint32)g_framebuffer_size == 0) {
-        g_framebuffer_size = width * height * bytes_per_pixel;
+    if (!MMIYOO_GetFramebufferInfoFromFD(gfx.fb_dev, &info)) {
+        MMIYOO_GetDefaultFramebufferInfo(&info);
     }
+
+    g_framebuffer_width = info.width;
+    g_framebuffer_height = info.height;
+    g_framebuffer_bytes_per_pixel = info.bytes_per_pixel;
+    g_framebuffer_stride = info.stride;
+    g_framebuffer_size = info.active_size;
+    g_framebuffer_format = info.sdl_format;
     g_tmp_buffer_size = g_framebuffer_size;
 }
 
@@ -444,8 +417,8 @@ void GFX_Init(void)
     }
 
     cvt = SDL_CreateRGBSurface(SDL_SWSURFACE,
-                               g_framebuffer_width > 0 ? g_framebuffer_width : MMIYOO_DEFAULT_WIDTH,
-                               g_framebuffer_height > 0 ? g_framebuffer_height : MMIYOO_DEFAULT_HEIGHT,
+                               g_framebuffer_width > 0 ? g_framebuffer_width : MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH,
+                               g_framebuffer_height > 0 ? g_framebuffer_height : MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT,
                                32, 0, 0, 0, 0);
 
     is_running = 1;
@@ -869,10 +842,7 @@ MI_U32 GFX_GetFrameStride(void)
     if (g_framebuffer_stride > 0) {
         return (MI_U32)g_framebuffer_stride;
     }
-    if (gfx.finfo.line_length > 0) {
-        return gfx.finfo.line_length;
-    }
-    return (MI_U32)(MMIYOO_FrameStrideBytes(MMIYOO_FrameBytesPerPixel()));
+    return (MI_U32)(MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH * MMIYOO_DEFAULT_FRAMEBUFFER_BYTES_PER_PIXEL);
 #else
     return 0;
 #endif
@@ -884,10 +854,7 @@ MI_U32 GFX_GetFrameWidth(void)
     if (g_framebuffer_width > 0) {
         return (MI_U32)g_framebuffer_width;
     }
-    if (gfx.vinfo.xres > 0) {
-        return gfx.vinfo.xres;
-    }
-    return MMIYOO_DEFAULT_WIDTH;
+    return MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH;
 #else
     return 0;
 #endif
@@ -899,10 +866,7 @@ MI_U32 GFX_GetFrameHeight(void)
     if (g_framebuffer_height > 0) {
         return (MI_U32)g_framebuffer_height;
     }
-    if (gfx.vinfo.yres > 0) {
-        return gfx.vinfo.yres;
-    }
-    return MMIYOO_DEFAULT_HEIGHT;
+    return MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT;
 #else
     return 0;
 #endif
@@ -990,7 +954,7 @@ int MMIYOO_CreateWindow(_THIS, SDL_Window *window)
         } else if (g_framebuffer_width > 0) {
             target_w = g_framebuffer_width;
         } else {
-            target_w = MMIYOO_DEFAULT_WIDTH;
+            target_w = MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH;
         }
     }
 
@@ -1000,7 +964,7 @@ int MMIYOO_CreateWindow(_THIS, SDL_Window *window)
         } else if (g_framebuffer_height > 0) {
             target_h = g_framebuffer_height;
         } else {
-            target_h = MMIYOO_DEFAULT_HEIGHT;
+            target_h = MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT;
         }
     }
 
@@ -1103,10 +1067,9 @@ int MMIYOO_VideoInit(_THIS)
     GFX_Init();
     MMIYOO_UpdateFramebufferMetrics();
 
-    native_w = (g_framebuffer_width > 0) ? g_framebuffer_width : MMIYOO_DEFAULT_WIDTH;
-    native_h = (g_framebuffer_height > 0) ? g_framebuffer_height : MMIYOO_DEFAULT_HEIGHT;
-
-    native_format = (gfx.vinfo.bits_per_pixel == 16) ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_ARGB8888;
+    native_w = (g_framebuffer_width > 0) ? g_framebuffer_width : MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH;
+    native_h = (g_framebuffer_height > 0) ? g_framebuffer_height : MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT;
+    native_format = g_framebuffer_format;
 
     native_mode.format = native_format;
     native_mode.w = native_w;

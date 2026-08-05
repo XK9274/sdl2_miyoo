@@ -58,11 +58,27 @@ typedef enum {
 #define MMIYOO_BUTTON_LAST MMIYOO_BUTTON_MENU
 #define MMIYOO_BUTTON_COUNT (MMIYOO_BUTTON_LAST + 1)
 
+#define MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH  640
+#define MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT 480
+#define MMIYOO_DEFAULT_FRAMEBUFFER_BYTES_PER_PIXEL 4
+
+typedef struct {
+    int width;
+    int height;
+    int stride;
+    int bytes_per_pixel;
+    int active_size;
+    Uint32 sdl_format;
+} MMIYOO_FramebufferInfo;
+
 extern int MMIYOO_WriteSysfs(const char *path, const char *value, size_t length);
 extern SDL_bool MMIYOO_ReadIntFile(const char *path, int *value);
 
 extern MMIYOO_DeviceModel MMIYOO_GetDeviceModel(void);
 extern Uint32 MMIYOO_KeycodeToButtonMask(int code);
+
+extern void MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info);
+extern SDL_bool MMIYOO_GetFramebufferInfoFromFD(int fb_fd, MMIYOO_FramebufferInfo *info);
 
 extern SDL_bool MMIYOO_HasRumble(void);
 extern int MMIYOO_SetRumble(SDL_bool enabled);
