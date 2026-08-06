@@ -25,12 +25,19 @@
 #include <linux/input.h>
 #include <linux/fb.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "SDL_atomic.h"
 #include "SDL_error.h"
+#include "SDL_hints.h"
+#include "SDL_log.h"
+#include "SDL_mutex.h"
 #include "SDL_pixels.h"
+#include "SDL_thread.h"
 #include "SDL_mmiyoo.h"
+#include "../../thread/SDL_systhread.h"
 
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0
@@ -170,6 +177,135 @@ MMIYOO_KeycodeToButtonMask(int code)
     }
 }
 
+/* Shared raw-input layer: a single reader of /dev/input/event0, consumed by
+ * both the video backend (keyboard/mouse emulation) and the joystick
+ * backend, instead of each independently opening and parsing the device.
+ * Reference-counted so either (or both) can init/deinit in any order. */
+static SDL_atomic_t s_input_ref_count;
+static SDL_atomic_t s_input_running;
+static int s_input_fd = -1;
+static SDL_mutex *s_input_mutex = NULL;
+static SDL_Thread *s_input_thread = NULL;
+static Uint32 s_keypad_bitmap = 0;
+
+static int
+MMIYOO_InputThread(void *data)
+{
+    struct input_event ev = {0};
+
+    (void)data;
+
+    while (SDL_AtomicGet(&s_input_running)) {
+        if (s_input_fd >= 0) {
+            ssize_t bytes;
+
+            while ((bytes = read(s_input_fd, &ev, sizeof(ev))) == sizeof(ev)) {
+                if ((ev.type == EV_KEY) && (ev.value != 2)) {
+                    const Uint32 bit = MMIYOO_KeycodeToButtonMask(ev.code);
+
+                    if (bit) {
+                        SDL_LockMutex(s_input_mutex);
+                        if (ev.value) {
+                            s_keypad_bitmap |= bit;
+                        } else {
+                            s_keypad_bitmap &= ~bit;
+                        }
+                        SDL_UnlockMutex(s_input_mutex);
+                    }
+                }
+            }
+
+            if ((bytes < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
+                usleep(1000000 / 60);
+            }
+        }
+        usleep(1000000 / 60);
+    }
+
+    return 0;
+}
+
+void
+MMIYOO_InputInit(void)
+{
+    if (SDL_AtomicIncRef(&s_input_ref_count) > 0) {
+        return;
+    }
+
+    s_input_mutex = SDL_CreateMutex();
+    if (!s_input_mutex) {
+        return;
+    }
+
+#if defined(MMIYOO)
+    s_input_fd = open("/dev/input/event0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (s_input_fd < 0) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_INPUT,
+                    "MMIYOO_InputInit: failed to open /dev/input/event0: %s",
+                    strerror(errno));
+    }
+#endif
+
+    SDL_AtomicSet(&s_input_running, 1);
+    s_input_thread = SDL_CreateThreadInternal(MMIYOO_InputThread, "MMIYOOInputThread", 4096, NULL);
+    if (!s_input_thread) {
+        SDL_AtomicSet(&s_input_running, 0);
+        if (s_input_fd >= 0) {
+            close(s_input_fd);
+            s_input_fd = -1;
+        }
+    }
+}
+
+void
+MMIYOO_InputDeinit(void)
+{
+    if (SDL_AtomicDecRef(&s_input_ref_count)) {
+        return;
+    }
+
+    SDL_AtomicSet(&s_input_running, 0);
+    if (s_input_thread) {
+        SDL_WaitThread(s_input_thread, NULL);
+        s_input_thread = NULL;
+    }
+    if (s_input_mutex) {
+        SDL_DestroyMutex(s_input_mutex);
+        s_input_mutex = NULL;
+    }
+    if (s_input_fd >= 0) {
+        close(s_input_fd);
+        s_input_fd = -1;
+    }
+}
+
+Uint32
+MMIYOO_GetKeypadBitmap(void)
+{
+    Uint32 bitmap = 0;
+
+    if (s_input_mutex) {
+        SDL_LockMutex(s_input_mutex);
+        bitmap = s_keypad_bitmap;
+        SDL_UnlockMutex(s_input_mutex);
+    }
+
+    return bitmap;
+}
+
+SDL_bool
+MMIYOO_IsKeyboardModeActive(void)
+{
+    const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_INPUT_MODE);
+    return (mode && SDL_strcmp(mode, MMIYOO_INPUT_MODE_KEYBOARD) == 0) ? SDL_TRUE : SDL_FALSE;
+}
+
+SDL_bool
+MMIYOO_IsJoystickModeActive(void)
+{
+    return MMIYOO_IsKeyboardModeActive() ? SDL_FALSE : SDL_TRUE;
+}
+
 void
 MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info)
 {
@@ -260,8 +396,13 @@ MMIYOO_InitRumbleGPIO(void)
         return result;
     }
 
+    result = MMIYOO_WriteSysfs(MMIYOO_RUMBLE_GPIO_VALUE, "1", 1);
+    if (result < 0) {
+        return result;
+    }
+
     rumble_gpio_ready = SDL_TRUE;
-    return MMIYOO_WriteSysfs(MMIYOO_RUMBLE_GPIO_VALUE, "1", 1);
+    return 0;
 }
 
 SDL_bool

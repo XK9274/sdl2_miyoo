@@ -392,6 +392,9 @@ $(objects)/SDL_joystick_mmiyoo.lo: /workspace/sdl2/src/joystick/mmiyoo/SDL_joyst
 $(objects)/SDL_syshaptic.lo: /workspace/sdl2/src/haptic/mmiyoo/SDL_syshaptic.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
+$(objects)/SDL_syspower.lo: /workspace/sdl2/src/power/mmiyoo/SDL_syspower.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
 $(objects)/SDL_sysfilesystem.lo: /workspace/sdl2/src/filesystem/unix/SDL_sysfilesystem.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 

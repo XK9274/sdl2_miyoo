@@ -361,7 +361,6 @@ if [[ "$RUN_CONFIG" == true ]]; then
 
     CONFIGURE_ARGS=(
         --disable-joystick-virtual
-        --disable-power
         --disable-alsa
         --disable-diskaudio
         --disable-video-x11

@@ -26,11 +26,6 @@
 
 #if defined(SDL_JOYSTICK_MMIYOO)
 
-#include <errno.h>
-#include <fcntl.h>
-#include <linux/input.h>
-#include <unistd.h>
-
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
 #include "SDL_joystick.h"
@@ -38,15 +33,9 @@
 #include "../SDL_sysjoystick.h"
 #include "../SDL_joystick_c.h"
 
-#ifndef O_CLOEXEC
-#define O_CLOEXEC 0
-#endif
-
-#define MMIYOO_INPUT_DEVICE "/dev/input/event0"
 #define MMIYOO_AXIS_MIN -32768
 #define MMIYOO_AXIS_MAX 32767
 
-static int event_fd = -1;
 static Uint32 button_state = 0;
 static Uint32 previous_button_state = 0;
 static Sint16 previous_axis_x = 0;
@@ -59,9 +48,7 @@ static int MMIYOO_JoystickInit(void)
     previous_axis_x = 0;
     previous_axis_y = 0;
 
-#if defined(MMIYOO)
-    event_fd = open(MMIYOO_INPUT_DEVICE, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-#endif
+    MMIYOO_InputInit();
 
     return 1;
 }
@@ -155,8 +142,6 @@ static int MMIYOO_JoystickSetSensorsEnabled(SDL_Joystick *joystick, SDL_bool ena
 
 static void MMIYOO_JoystickUpdate(SDL_Joystick *joystick)
 {
-    struct input_event ev;
-    ssize_t bytes;
     Uint32 changed;
     Sint16 axis_x;
     Sint16 axis_y;
@@ -166,26 +151,16 @@ static void MMIYOO_JoystickUpdate(SDL_Joystick *joystick)
     SDL_bool down;
     int i;
 
-    if (event_fd >= 0) {
-        while ((bytes = read(event_fd, &ev, sizeof(ev))) == sizeof(ev)) {
-            if ((ev.type == EV_KEY) && (ev.value != 2)) {
-                const Uint32 bit = MMIYOO_KeycodeToButtonMask(ev.code);
-
-                if (bit) {
-                    if (ev.value) {
-                        button_state |= bit;
-                    } else {
-                        button_state &= ~bit;
-                    }
-                }
-            }
-        }
-
-        if ((bytes < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
-            close(event_fd);
-            event_fd = -1;
-        }
+    if (!MMIYOO_IsJoystickModeActive()) {
+        /* Keyboard-emulation mode is active -- resync the diff baseline to
+         * the real bitmap without posting anything, so reactivating later
+         * diffs against the true current state rather than manufacturing a
+         * false "just pressed" edge for whatever is already held. */
+        previous_button_state = MMIYOO_GetKeypadBitmap();
+        return;
     }
+
+    button_state = MMIYOO_GetKeypadBitmap();
 
     changed = previous_button_state ^ button_state;
     if (changed) {
@@ -251,10 +226,7 @@ static void MMIYOO_JoystickClose(SDL_Joystick *joystick)
 
 static void MMIYOO_JoystickQuit(void)
 {
-    if (event_fd >= 0) {
-        close(event_fd);
-        event_fd = -1;
-    }
+    MMIYOO_InputDeinit();
     button_state = 0;
     previous_button_state = 0;
     previous_axis_x = 0;

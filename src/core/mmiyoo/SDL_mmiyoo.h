@@ -55,7 +55,7 @@ typedef enum {
     MMIYOO_BUTTON_VOLDOWN
 } MMIYOO_Button;
 
-#define MMIYOO_BUTTON_LAST MMIYOO_BUTTON_MENU
+#define MMIYOO_BUTTON_LAST MMIYOO_BUTTON_VOLDOWN
 #define MMIYOO_BUTTON_COUNT (MMIYOO_BUTTON_LAST + 1)
 
 #define MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH  640
@@ -85,6 +85,20 @@ extern int MMIYOO_SetRumble(SDL_bool enabled);
 
 extern SDL_bool MMIYOO_GetBatteryPercent(int *percent);
 extern SDL_bool MMIYOO_IsCharging(SDL_bool *charging);
+
+/* Shared raw-input layer (single reader of /dev/input/event0), and the live,
+ * app-switchable mode deciding whether the video backend's keyboard/mouse
+ * emulation or the joystick backend is the one actually posting SDL events
+ * from it. Unset hint defaults to joystick. */
+#define SDL_HINT_MMIYOO_INPUT_MODE "SDL_MMIYOO_INPUT_MODE"
+#define MMIYOO_INPUT_MODE_KEYBOARD "keyboard"
+#define MMIYOO_INPUT_MODE_JOYSTICK "joystick"
+
+extern void MMIYOO_InputInit(void);
+extern void MMIYOO_InputDeinit(void);
+extern Uint32 MMIYOO_GetKeypadBitmap(void);
+extern SDL_bool MMIYOO_IsKeyboardModeActive(void);
+extern SDL_bool MMIYOO_IsJoystickModeActive(void);
 
 #endif /* SDL_mmiyoo_h_ */
 

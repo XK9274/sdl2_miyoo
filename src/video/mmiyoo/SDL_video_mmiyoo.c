@@ -237,14 +237,6 @@ int fb_init(void)
 
     gfx.double_buffer_enabled = SDL_TRUE;
 
-    {
-        const char *legacy_env = SDL_getenv("SDL_MMIYOO_DOUBLE_BUFFER");
-        if (legacy_env && SDL_strcmp(legacy_env, "1") != 0) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
-                        "SDL_MMIYOO_DOUBLE_BUFFER is deprecated; driver always uses double buffering");
-        }
-    }
-
     gfx.fb_dev = open("/dev/fb0", O_RDWR);
     ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
     ioctl(gfx.fb_dev, FBIOGET_VSCREENINFO, &gfx.vinfo);
@@ -980,6 +972,10 @@ int MMIYOO_CreateWindow(_THIS, SDL_Window *window)
 
     SDL_OnWindowResized(window);
     SDL_SetMouseFocus(window);
+    /* One window, it always has focus -- without this, SDL_PrivateJoystickButton
+     * silently drops every joystick button-press since it treats "no keyboard
+     * focus" as unfocused/background. */
+    SDL_SetKeyboardFocus(window);
     MMiyooVideoInfo.window = window;
     return 0;
 }

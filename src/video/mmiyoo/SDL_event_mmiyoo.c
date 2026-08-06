@@ -26,16 +26,8 @@
 
 #if SDL_VIDEO_DRIVER_MMIYOO
 
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <linux/input.h>
-#include "SDL_atomic.h"
 #include "SDL_timer.h"
 #include "../../events/SDL_events_c.h"
-#include "../../thread/SDL_systhread.h"
 
 #include "SDL_video_mmiyoo.h"
 #include "SDL_event_mmiyoo.h"
@@ -44,11 +36,8 @@ MMIYOO_EventInfo MMiyooEventInfo = {0};
 
 extern MMIYOO_VideoInfo MMiyooVideoInfo;
 
-static SDL_atomic_t running;
-static int event_fd = -1;
 static uint32_t pre_ticks = 0;
 static SDL_mutex *event_mutex = NULL;
-static SDL_Thread *thread = NULL;
 static uint32_t pre_keypad_bitmaps = 0;
 
 static void check_mouse_pos(void)
@@ -78,45 +67,6 @@ static int get_move_interval(int type)
     return (int)(1.0 * move);
 }
 
-int EventUpdate(void *data)
-{
-    struct input_event ev = {0};
-
-    (void)data;
-
-    while (SDL_AtomicGet(&running)) {
-        if (event_fd >= 0) {
-            ssize_t bytes = 0;
-
-            while ((bytes = read(event_fd, &ev, sizeof(ev))) == sizeof(ev)) {
-                if ((ev.type == EV_KEY) && (ev.value != 2)) {
-                    const uint32_t bit = MMIYOO_KeycodeToButtonMask(ev.code);
-
-                    if (bit) {
-                        SDL_LockMutex(event_mutex);
-                        if (ev.value) {
-                            MMiyooEventInfo.keypad.bitmaps |= bit;
-                        } else {
-                            MMiyooEventInfo.keypad.bitmaps &= ~bit;
-                        }
-                        if (!(MMiyooEventInfo.keypad.bitmaps & 0x0f)) {
-                            pre_ticks = SDL_GetTicks();
-                        }
-                        SDL_UnlockMutex(event_mutex);
-                    }
-                }
-            }
-
-            if ((bytes < 0) && (errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
-                usleep(1000000 / 60);
-            }
-        }
-        usleep(1000000 / 60);
-    }
-    
-    return 0;
-}
-
 void MMIYOO_EventInit(void)
 {
     pre_keypad_bitmaps = 0;
@@ -130,50 +80,20 @@ void MMIYOO_EventInit(void)
     MMiyooEventInfo.mouse.y = 190;
     MMiyooEventInfo.mode = MMIYOO_KEYPAD_MODE;
 
-#if defined(MMIYOO)
-    event_fd = open("/dev/input/event0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    if(event_fd < 0){
-        printf("failed to open /dev/input/event0\n");
-    }
-#endif
-
     if((event_mutex =  SDL_CreateMutex()) == NULL) {
         SDL_SetError("Can't create input mutex");
-        if(event_fd >= 0) {
-            close(event_fd);
-            event_fd = -1;
-        }
         return;
     }
 
-    SDL_AtomicSet(&running, 1);
-    if((thread = SDL_CreateThreadInternal(EventUpdate, "MMIYOOInputThread", 4096, NULL)) == NULL) {
-        SDL_SetError("Can't create input thread");
-        SDL_AtomicSet(&running, 0);
-        SDL_DestroyMutex(event_mutex);
-        event_mutex = NULL;
-        if(event_fd >= 0) {
-            close(event_fd);
-            event_fd = -1;
-        }
-        return;
-    }
+    MMIYOO_InputInit();
 }
 
 void MMIYOO_EventDeinit(void)
 {
-    SDL_AtomicSet(&running, 0);
-    if(thread) {
-        SDL_WaitThread(thread, NULL);
-        thread = NULL;
-    }
+    MMIYOO_InputDeinit();
     if(event_mutex) {
         SDL_DestroyMutex(event_mutex);
         event_mutex = NULL;
-    }
-    if(event_fd >= 0) {
-        close(event_fd);
-        event_fd = -1;
     }
 }
 
@@ -210,8 +130,21 @@ void MMIYOO_PumpEvents(_THIS)
         return;
     }
 
+    keypad_bitmaps = MMIYOO_GetKeypadBitmap();
+    if (!(keypad_bitmaps & 0x0f)) {
+        pre_ticks = SDL_GetTicks();
+    }
+
+    if (!MMIYOO_IsKeyboardModeActive()) {
+        /* Joystick mode is active -- MMIYOO_JoystickUpdate is the one
+         * posting events from the shared bitmap instead. Keep the diff
+         * baseline in sync so switching back to keyboard mode later doesn't
+         * replay a burst of stale transitions. */
+        pre_keypad_bitmaps = keypad_bitmaps;
+        return;
+    }
+
     SDL_LockMutex(event_mutex);
-    keypad_bitmaps = MMiyooEventInfo.keypad.bitmaps;
     mode = MMiyooEventInfo.mode;
     SDL_UnlockMutex(event_mutex);
 

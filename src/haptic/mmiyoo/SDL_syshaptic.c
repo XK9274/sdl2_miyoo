@@ -36,7 +36,6 @@ struct haptic_hweffect {
     int unused;
 };
 
-static SDL_bool haptic_available = SDL_FALSE;
 static SDL_Haptic *open_haptic = NULL;
 
 static Uint32 SDLCALL
@@ -58,20 +57,19 @@ MMIYOO_HapticTimer(Uint32 interval, void *param)
 int
 SDL_SYS_HapticInit(void)
 {
-    haptic_available = MMIYOO_HasRumble();
     return 0;
 }
 
 int
 SDL_SYS_NumHaptics(void)
 {
-    return haptic_available ? 1 : 0;
+    return MMIYOO_HasRumble() ? 1 : 0;
 }
 
 const char *
 SDL_SYS_HapticName(int index)
 {
-    if (!haptic_available || index != 0) {
+    if (!MMIYOO_HasRumble() || index != 0) {
         SDL_SetError("No such haptic device");
         return NULL;
     }
@@ -82,7 +80,7 @@ SDL_SYS_HapticName(int index)
 int
 SDL_SYS_HapticOpen(SDL_Haptic *haptic)
 {
-    if (!haptic_available || haptic->index != 0) {
+    if (!MMIYOO_HasRumble() || haptic->index != 0) {
         return SDL_SetError("No such haptic device");
     }
 
@@ -117,7 +115,7 @@ SDL_SYS_JoystickIsHaptic(SDL_Joystick *joystick)
 {
     (void)joystick;
 
-    return haptic_available ? 1 : 0;
+    return MMIYOO_HasRumble() ? 1 : 0;
 }
 
 int

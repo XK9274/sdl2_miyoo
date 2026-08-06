@@ -262,7 +262,7 @@
 /* #undef SDL_THREADS_DISABLED */
 /* #undef SDL_TIMERS_DISABLED */
 /* #undef SDL_VIDEO_DISABLED */
-#define SDL_POWER_DISABLED 1
+/* #undef SDL_POWER_DISABLED */
 /* #undef SDL_FILESYSTEM_DISABLED */
 
 /* Enable various audio drivers */
@@ -445,7 +445,7 @@
 /* #undef SDL_POWER_ANDROID */
 /* #undef SDL_POWER_EMSCRIPTEN */
 /* #undef SDL_POWER_HARDWIRED */
-/* #undef SDL_POWER_MMIYOO */
+#define SDL_POWER_MMIYOO 1
 
 /* Enable system filesystem support */
 /* #undef SDL_FILESYSTEM_HAIKU */
