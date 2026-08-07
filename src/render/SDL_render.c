@@ -98,6 +98,17 @@ this should probably be removed at some point in the future.  --ryan. */
 
 #if !SDL_RENDER_DISABLED
 static const SDL_RenderDriver *render_drivers[] = {
+#if SDL_VIDEO_RENDER_MMIYOO
+    /* Must come before the generic GL/GLES2 drivers below: with index=-1 and
+     * no SDL_HINT_RENDER_DRIVER set, SDL_CreateRenderer tries this array in
+     * order and uses whichever CreateRenderer() succeeds first. Enabling
+     * GLES support compiles in GLES2_RenderDriver, and every mmiyoo app
+     * calls SDL_CreateRenderer(window, -1, ...) without a hint -- if GLES2
+     * were tried first it would create a GL context on a non-GL window and
+     * crash inside the vendor libGLESv2 blob before MMIYOO ever gets a
+     * chance to run. */
+    &MMIYOO_RenderDriver,
+#endif
 #if SDL_VIDEO_RENDER_D3D
     &D3D_RenderDriver,
 #endif
@@ -127,9 +138,6 @@ static const SDL_RenderDriver *render_drivers[] = {
 #endif
 #if SDL_VIDEO_RENDER_SW
     &SW_RenderDriver,
-#endif
-#if SDL_VIDEO_RENDER_MMIYOO
-    &MMIYOO_RenderDriver
 #endif
 };
 #endif /* !SDL_RENDER_DISABLED */
