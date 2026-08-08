@@ -100,6 +100,10 @@ extern Uint32 MMIYOO_GetKeypadBitmap(void);
 extern SDL_bool MMIYOO_IsKeyboardModeActive(void);
 extern SDL_bool MMIYOO_IsJoystickModeActive(void);
 
+/* Skip the vsync wait if already past frame budget. Unset = adaptive, "0" = strict. */
+#define SDL_HINT_MMIYOO_VSYNC_ADAPTIVE "SDL_MMIYOO_VSYNC_ADAPTIVE"
+extern SDL_bool MMIYOO_IsVSyncAdaptive(void);
+
 #endif /* SDL_mmiyoo_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

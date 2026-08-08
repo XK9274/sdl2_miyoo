@@ -2316,7 +2316,7 @@ static void MMIYOO_RenderPresent(SDL_Renderer *renderer)
     GFX_FlushTextureFences();
 
     if (!data->is_target_texture || data->texture_blitted_to_screen) {
-        GFX_SwapBuffers();
+        GFX_SwapBuffers(data->vsync);
         if (!was_target_texture) {
             data->current_target_surface.phyAddr = GFX_GetFrameBuffer();
             data->current_target_surface.u32Stride = GFX_GetFrameStride();
@@ -2399,6 +2399,9 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
 
 static int MMIYOO_SetVSync(SDL_Renderer *renderer, const int vsync)
 {
+    MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
+
+    data->vsync = (vsync != 0) ? SDL_TRUE : SDL_FALSE;
     return 0;
 }
 

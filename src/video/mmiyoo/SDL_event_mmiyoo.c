@@ -144,20 +144,22 @@ void MMIYOO_PumpEvents(_THIS)
         return;
     }
 
-    /* VOLUP is deliberately excluded from the generic 0..MYKEY_LAST_BITS
-     * table below (POWER/VOL-/VOL+ are physical buttons outside the
-     * standard 15-button keypad emulation set) but benches use it as a
-     * dedicated runtime vsync toggle -- handle it here on its own,
-     * independent of that loop/table and its baseline, so nothing about
-     * the existing key table needs to change. Joystick mode doesn't need
-     * this: MMIYOO_JoystickUpdate already reports the full button set,
-     * VOLUP included. */
+    /* VOLUP/VOLDOWN: not in the table below, track separately. */
     {
         static uint32_t pre_volup_bit = 0;
         const uint32_t volup_bit = keypad_bitmaps & (1u << MYKEY_VOLUP);
         if (volup_bit != pre_volup_bit) {
             SDL_SendKeyboardKey(volup_bit ? SDL_PRESSED : SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_v));
             pre_volup_bit = volup_bit;
+        }
+    }
+
+    {
+        static uint32_t pre_voldown_bit = 0;
+        const uint32_t voldown_bit = keypad_bitmaps & (1u << MYKEY_VOLDOWN);
+        if (voldown_bit != pre_voldown_bit) {
+            SDL_SendKeyboardKey(voldown_bit ? SDL_PRESSED : SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_m));
+            pre_voldown_bit = voldown_bit;
         }
     }
 

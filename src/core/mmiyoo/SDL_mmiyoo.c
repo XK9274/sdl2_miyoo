@@ -306,6 +306,13 @@ MMIYOO_IsJoystickModeActive(void)
     return MMIYOO_IsKeyboardModeActive() ? SDL_FALSE : SDL_TRUE;
 }
 
+SDL_bool
+MMIYOO_IsVSyncAdaptive(void)
+{
+    const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_ADAPTIVE);
+    return (mode && SDL_strcmp(mode, "0") == 0) ? SDL_FALSE : SDL_TRUE;
+}
+
 void
 MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info)
 {

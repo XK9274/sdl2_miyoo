@@ -135,7 +135,7 @@ MI_U32 GFX_GetFrameStride(void);
 MI_U32 GFX_GetFrameWidth(void);
 MI_U32 GFX_GetFrameHeight(void);
 SDL_bool GFX_IsDoubleBuffered(void);
-void GFX_SwapBuffers(void);
+void GFX_SwapBuffers(SDL_bool wait_for_vsync);
 void *GFX_GetFrameBufferVirtual(void);
 
 int fb_init(void);

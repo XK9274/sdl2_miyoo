@@ -39,6 +39,7 @@
 #include "SDL_log.h"
 #include "SDL_atomic.h"
 #include "SDL_rect.h"
+#include "SDL_timer.h"
 #include <sys/mman.h>
 #include "neon.h"
 #include <sys/ioctl.h>
@@ -909,13 +910,34 @@ SDL_bool GFX_IsDoubleBuffered(void)
 #endif
 }
 
-void GFX_SwapBuffers(void)
+void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 {
 #ifdef MMIYOO
     MI_U32 copy_bytes;
 
     if (!gfx.double_buffer_enabled || gfx.back.phyAddr == 0 || gfx.fb.phyAddr == 0) {
         return;
+    }
+
+    if (wait_for_vsync && gfx.fb_dev > 0) {
+        static SDL_bool vsync_unsupported_warned = SDL_FALSE;
+        static Uint64 last_present_ticks = 0;
+        const Uint64 target_interval_ms = 17; /* one frame @ 60Hz */
+        const Uint64 now = SDL_GetTicks64();
+        const SDL_bool already_late = MMIYOO_IsVSyncAdaptive()
+            && last_present_ticks != 0
+            && (now - last_present_ticks) >= target_interval_ms;
+
+        if (!already_late) {
+            __u32 crtc = 0;
+
+            if (ioctl(gfx.fb_dev, FBIO_WAITFORVSYNC, &crtc) != 0 && !vsync_unsupported_warned) {
+                MMIYOO_LOG_WARN("GFX_SwapBuffers: FBIO_WAITFORVSYNC not supported, presenting unsynchronized");
+                vsync_unsupported_warned = SDL_TRUE;
+            }
+        }
+
+        last_present_ticks = SDL_GetTicks64();
     }
 
     copy_bytes = gfx.back.length;
