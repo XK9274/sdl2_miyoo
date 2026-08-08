@@ -144,22 +144,45 @@ void MMIYOO_PumpEvents(_THIS)
         return;
     }
 
-    /* VOLUP/VOLDOWN: not in the table below, track separately. */
+    /* SELECT held as a modifier: X = vsync on/off, A = adaptive/strict.
+       Synthesizes the same SDLK_v/SDLK_m hotkeys the benchmarks already
+       listen for (see controller_input.h BTN_VSYNC_TOGGLE/BTN_VSYNC_MODE_TOGGLE),
+       so nothing on the app side needs to change. SELECT's own key (RCTRL)
+       still fires as a plain tap on release if no combo was used during the
+       hold, matching each suite's existing "tap SELECT" handling (e.g. reset
+       metrics) -- see bench_driver_translate_button_event's joystick-mode
+       mirror of this same logic in common/driver_support.c. While SELECT is
+       held, SELECT/X/A are masked out of keypad_bitmaps below so the generic
+       per-bit loop doesn't also forward their normal keys (RCTRL/LSHIFT/SPACE)
+       to the game. */
     {
-        static uint32_t pre_volup_bit = 0;
-        const uint32_t volup_bit = keypad_bitmaps & (1u << MYKEY_VOLUP);
-        if (volup_bit != pre_volup_bit) {
-            SDL_SendKeyboardKey(volup_bit ? SDL_PRESSED : SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_v));
-            pre_volup_bit = volup_bit;
-        }
-    }
+        static uint32_t select_was_held = 0;
+        static uint32_t select_combo_used = 0;
+        const uint32_t select_bit = keypad_bitmaps & (1u << MYKEY_SELECT);
 
-    {
-        static uint32_t pre_voldown_bit = 0;
-        const uint32_t voldown_bit = keypad_bitmaps & (1u << MYKEY_VOLDOWN);
-        if (voldown_bit != pre_voldown_bit) {
-            SDL_SendKeyboardKey(voldown_bit ? SDL_PRESSED : SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_m));
-            pre_voldown_bit = voldown_bit;
+        if (select_bit && !select_was_held) {
+            select_combo_used = 0;
+        }
+
+        if (select_bit) {
+            if (!select_combo_used && (keypad_bitmaps & (1u << MYKEY_X))) {
+                select_combo_used = 1;
+                SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_v));
+                SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_v));
+            } else if (!select_combo_used && (keypad_bitmaps & (1u << MYKEY_A))) {
+                select_combo_used = 1;
+                SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_m));
+                SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_m));
+            }
+        } else if (select_was_held && !select_combo_used) {
+            SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_RCTRL));
+            SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_RCTRL));
+        }
+
+        select_was_held = select_bit;
+
+        if (select_bit) {
+            keypad_bitmaps &= ~((1u << MYKEY_SELECT) | (1u << MYKEY_X) | (1u << MYKEY_A));
         }
     }
 

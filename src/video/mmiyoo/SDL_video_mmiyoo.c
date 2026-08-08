@@ -978,6 +978,18 @@ void MMIYOO_DestroyWindow(_THIS, SDL_Window *window)
     MMIYOO_LOG_DEBUG("DestroyWindow: window id=%u ptr=%p", window->id, (void*)window);
 }
 
+/* Restores mouse/keyboard focus and event routing to `window`. Exposed via
+ * the public SDL_RaiseWindow() -- needed by callers that create a second,
+ * throwaway window (e.g. an offscreen GL context for a loading-screen
+ * effect) after the real window already had focus, since MMIYOO_CreateWindow
+ * unconditionally grabs focus for every window it creates. */
+void MMIYOO_RaiseWindow(_THIS, SDL_Window *window)
+{
+    SDL_SetMouseFocus(window);
+    SDL_SetKeyboardFocus(window);
+    MMiyooVideoInfo.window = window;
+}
+
 int MMIYOO_CreateWindow(_THIS, SDL_Window *window)
 {
     int target_w = window->w;
@@ -1017,7 +1029,15 @@ int MMIYOO_CreateWindow(_THIS, SDL_Window *window)
     SDL_SetMouseFocus(window);
     /* One window, it always has focus -- without this, SDL_PrivateJoystickButton
      * silently drops every joystick button-press since it treats "no keyboard
-     * focus" as unfocused/background. */
+     * focus" as unfocused/background.
+     *
+     * NOTE: window->flags always has SDL_WINDOW_HIDDEN set here regardless of
+     * what the caller requested -- SDL_video.c ORs it in unconditionally
+     * before calling CreateSDLWindow, only clearing it later via
+     * SDL_ShowWindow. So this cannot be conditioned on the HIDDEN flag to
+     * skip stealing focus for a throwaway offscreen-GL window; callers that
+     * create one of those after the real window already has focus must
+     * restore it themselves via MMIYOO_RaiseWindow (SDL_RaiseWindow). */
     SDL_SetKeyboardFocus(window);
     MMiyooVideoInfo.window = window;
     return 0;
@@ -1056,6 +1076,7 @@ static SDL_VideoDevice *MMIYOO_CreateDevice(int devindex)
     device->UpdateWindowFramebuffer = MMIYOO_UpdateWindowFramebuffer;
     device->DestroyWindowFramebuffer = MMIYOO_DestroyWindowFramebuffer;
     device->DestroyWindow = MMIYOO_DestroyWindow;
+    device->RaiseWindow = MMIYOO_RaiseWindow;
 
 #if SDL_VIDEO_OPENGL_EGL && SDL_VIDEO_OPENGL_ES2
     device->GL_LoadLibrary = glLoadLibrary;
