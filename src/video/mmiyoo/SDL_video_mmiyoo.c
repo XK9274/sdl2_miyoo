@@ -116,17 +116,29 @@ mmiyoo_wait_gfx_idle(void)
     MI_GFX_WaitAllDone(TRUE, 0);
 }
 
-// Flush all pending texture fences for performance
+// Waits on every queued fence individually rather than just the highest one:
+// MI_GFX doesn't document that QuickFill/BitBlit/DrawLine fences complete in
+// strict issue order, and assuming so caused visible top-of-screen tearing
+// (an earlier fill could still be in flight when a later fence was reached).
 void GFX_FlushTextureFences(void)
 {
 #ifdef MMIYOO
     int i;
-    
     for (i = 0; i < global_fence_count; i++) {
         MI_GFX_WaitAllDone(FALSE, global_texture_fences[i]);
     }
-    
     global_fence_count = 0;
+#endif
+}
+
+// Single tracking point for all queued GFX fences (BitBlit, QuickFill, DrawLine)
+void GFX_AddTextureFence(MI_U16 fence)
+{
+#ifdef MMIYOO
+    if (global_fence_count >= MAX_GLOBAL_FENCES) {
+        GFX_FlushTextureFences();
+    }
+    global_texture_fences[global_fence_count++] = fence;
 #endif
 }
 
@@ -274,11 +286,6 @@ int fb_init(void)
     
     memset(&gfx.hw.opt, 0, sizeof(gfx.hw.opt));
 
-    if (MI_SYS_MMA_Alloc(NULL, g_tmp_buffer_size, &gfx.tmp.phyAddr) == MI_SUCCESS) {
-        gfx.tmp.length = g_tmp_buffer_size;
-        MI_SYS_Mmap(gfx.tmp.phyAddr, gfx.tmp.length, &gfx.tmp.virAddr, TRUE);
-    }
-
     if (MI_SYS_MMA_Alloc(NULL, g_tmp_buffer_size, &gfx.overlay.phyAddr) == MI_SUCCESS) {
         gfx.overlay.length = g_tmp_buffer_size;
         MI_SYS_Mmap(gfx.overlay.phyAddr, gfx.overlay.length, &gfx.overlay.virAddr, TRUE);
@@ -323,15 +330,6 @@ int fb_uninit(void)
     if (gfx.fb.virAddr && gfx.fb.length > 0) {
         MI_SYS_Munmap(gfx.fb.virAddr, gfx.fb.length);
         gfx.fb.virAddr = NULL;
-    }
-    if (gfx.tmp.virAddr && gfx.tmp.length > 0) {
-        MI_SYS_Munmap(gfx.tmp.virAddr, gfx.tmp.length);
-        gfx.tmp.virAddr = NULL;
-    }
-    if (gfx.tmp.phyAddr) {
-        MI_SYS_MMA_Free(gfx.tmp.phyAddr);
-        gfx.tmp.phyAddr = 0;
-        gfx.tmp.length = 0;
     }
     if (gfx.overlay.virAddr && gfx.overlay.length > 0) {
         MI_SYS_Munmap(gfx.overlay.virAddr, gfx.overlay.length);
@@ -488,9 +486,6 @@ void GFX_Clear(void)
     if (gfx.double_buffer_enabled && gfx.back.phyAddr && gfx.back.length > 0) {
         MI_SYS_MemsetPa(gfx.back.phyAddr, 0, gfx.back.length);
     }
-    if (gfx.tmp.phyAddr && gfx.tmp.length > 0) {
-        MI_SYS_MemsetPa(gfx.tmp.phyAddr, 0, gfx.tmp.length);
-    }
 #endif
 }
 
@@ -515,7 +510,6 @@ int GFX_Copy(const void *pixels,
              Uint8 mod_a)
 {
 #ifdef MMIYOO
-    SDL_bool use_staging_copy = SDL_TRUE;
     MI_U16 u16Fence = 0;
     MI_S32 result;
     Uint32 src_bytes_per_pixel = bytes_per_pixel;
@@ -622,53 +616,6 @@ int GFX_Copy(const void *pixels,
         return -1;
     }
 
-    if (pixels_phy != 0) {
-        use_staging_copy = SDL_FALSE;
-    }
-
-    if (use_staging_copy) {
-        size_t row_bytes;
-        size_t aligned_stride;
-        size_t copy_size;
-        const Uint8 *src_row;
-        Uint8 *dst_row;
-
-#ifdef MMIYOO
-        /* Ensure previous hardware blits that consumed the shared staging buffer
-           have finished before we overwrite it with new pixel data. */
-        GFX_FlushTextureFences();
-#endif
-
-        row_bytes = srcrect.w * src_bytes_per_pixel;
-        aligned_stride = (row_bytes + 15) & ~15;  /* 16-byte alignment for MI_GFX */
-        copy_size = srcrect.h * row_bytes;
-
-        if (row_bytes == 0 || srcrect.h == 0) {
-            MMIYOO_LOG_ERROR("GFX_Copy: zero-sized copy (row_bytes=%zu height=%d)", row_bytes, srcrect.h);
-            return -1;
-        }
-
-        /* Validate copy size */
-        if ((int)copy_size > g_tmp_buffer_size) {
-            MMIYOO_LOG_ERROR("GFX_Copy: copy_size=%zu exceeds staging buffer (%d)", copy_size, g_tmp_buffer_size);
-            return -1;
-        }
-
-        /* Pure MI_SYS strategy: external pixel data always uses neon_memcpy to MI_SYS staging buffer */
-        /* DMA optimization happens between MI_SYS buffers in hardware operations */
-
-        src_row = (const Uint8 *)pixels + (size_t)srcrect.y * pitch + (size_t)srcrect.x * src_bytes_per_pixel;
-        dst_row = (Uint8 *)gfx.tmp.virAddr;
-
-        for (int row = 0; row < srcrect.h; row++) {
-            neon_memcpy(dst_row, src_row, row_bytes);
-            src_row += pitch;
-            dst_row += aligned_stride;  /* Use aligned stride for staging buffer */
-        }
-
-        MI_SYS_FlushInvCache(gfx.tmp.virAddr, srcrect.h * aligned_stride);
-    }
-
     /* Configure blending according to SDL's requested mode */
     gfx.hw.opt.u32GlobalSrcConstColor = 0;
     gfx.hw.opt.u32GlobalDstConstColor = 0;
@@ -766,23 +713,8 @@ int GFX_Copy(const void *pixels,
     /* Setup source surface and rectangle */
     gfx.hw.src.surf.eColorFmt = mi_src_format;
 
-    if (use_staging_copy) {
-        gfx.hw.src.rt.s32Xpos = 0;  /* Always 0 for staging buffer */
-        gfx.hw.src.rt.s32Ypos = 0;  /* Always 0 for staging buffer */
-        gfx.hw.src.rt.u32Width = srcrect.w;
-        gfx.hw.src.rt.u32Height = srcrect.h;
-        gfx.hw.src.surf.u32Width = srcrect.w;
-        gfx.hw.src.surf.u32Height = srcrect.h;
-        gfx.hw.src.surf.u32Stride = (srcrect.w * src_bytes_per_pixel + 15) & ~15;  /* 16-byte aligned stride */
-        gfx.hw.src.surf.phyAddr = gfx.tmp.phyAddr;
-    } else {
-        MI_PHY offset;
-        const Uint8 *cpu_src;
-
-        offset = (MI_PHY)srcrect.y * pitch + (MI_PHY)srcrect.x * src_bytes_per_pixel;
-        cpu_src = (const Uint8 *)pixels + (size_t)srcrect.y * pitch + (size_t)srcrect.x * src_bytes_per_pixel;
-
-        (void)cpu_src; /* currently unused but kept for future cache management */
+    {
+        MI_PHY offset = (MI_PHY)srcrect.y * pitch + (MI_PHY)srcrect.x * src_bytes_per_pixel;
 
         gfx.hw.src.rt.s32Xpos = 0;
         gfx.hw.src.rt.s32Ypos = 0;
@@ -841,9 +773,7 @@ int GFX_Copy(const void *pixels,
     
     if (result == MI_SUCCESS) {
         // Add fence to global batch instead of waiting immediately
-        if (global_fence_count < MAX_GLOBAL_FENCES) {
-            global_texture_fences[global_fence_count++] = u16Fence;
-        }
+        GFX_AddTextureFence(u16Fence);
         return 0;
     }
     MMIYOO_LOG_WARN("GFX_Copy: MI_GFX_BitBlit failed (result=%d)", result);

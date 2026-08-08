@@ -79,7 +79,7 @@ typedef struct _GFX {
         MI_PHY phyAddr;
         MI_U32 length;
 
-    } fb, back, tmp, overlay;
+    } fb, back, overlay;
 
     struct _HW {
         struct _BUF {
@@ -110,6 +110,7 @@ typedef struct _GFX {
 
 void GFX_Clear(void);
 void GFX_FlushTextureFences(void);
+void GFX_AddTextureFence(MI_U16 fence);
 int GFX_Copy(const void *pixels,
              MI_PHY pixels_phy,
              SDL_Rect srcrect,

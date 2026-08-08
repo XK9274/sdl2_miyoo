@@ -60,8 +60,6 @@ static int mmiyoo_texture_live_count = 0;
         }                                                     \
     } while (0)
 
-#define MAX_BATCH_SIZE 512
-
 typedef struct MMIYOO_TextureData {
     void *data;
     unsigned int size;
@@ -89,11 +87,6 @@ struct MMIYOO_RenderData {
     SDL_bool viewport_enabled;
     SDL_bool clip_enabled;
     SDL_Rect clip_rect;
-
-    // Fence batching system
-    MI_U16 pending_fences[MAX_BATCH_SIZE];
-    int fence_count;
-    SDL_bool batching_enabled;
 
     // Color state for draw operations
     Uint8 draw_color_r;
@@ -149,7 +142,6 @@ static void MMIYOO_RectBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *dat
 static void MMIYOO_ProcessFillCommand(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SDL_RenderCommand *cmd, void *vertices);
 static void MMIYOO_ProcessDrawLines(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SDL_RenderCommand *cmd, void *vertices);
 static void MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SDL_RenderCommand *cmd, void *vertices);
-static void add_fence_to_batch(MMIYOO_RenderData *data, MI_U16 fence);
 
 extern GFX gfx;
 extern MMIYOO_EventInfo MMiyooEventInfo;
@@ -754,7 +746,7 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
 
     result = MI_GFX_QuickFill(&data->current_target_surface, &dst_rect, color, &fence);
     if (result == MI_SUCCESS) {
-        add_fence_to_batch(data, fence);  // Use optimized batching
+        GFX_AddTextureFence(fence);
     } else {
         MMIYOO_LOG_WARN("QuickFill: MI_GFX_QuickFill failed (result=%d)", result);
     }
@@ -864,7 +856,7 @@ MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data,
 
     result = MI_GFX_DrawLine(&data->current_target_surface, &line, &fence);
     if (result == MI_SUCCESS) {
-        add_fence_to_batch(data, fence);  // Use optimized batching
+        GFX_AddTextureFence(fence);
         return SDL_TRUE;
     }
 
@@ -1088,31 +1080,6 @@ MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
     return SDL_TRUE;
 }
 
-// Optimized fence batching functions for performance
-static void flush_batch(MMIYOO_RenderData *data)
-{
-    int i;
-    if (data->fence_count > 0) {
-        // Wait for all fences in batch - more efficient than individual waits
-        for (i = 0; i < data->fence_count; i++) {
-            MI_GFX_WaitAllDone(FALSE, data->pending_fences[i]);
-        }
-        data->fence_count = 0;
-    }
-}
-
-// Optimized batch management: flush when full and continue batching
-static void add_fence_to_batch(MMIYOO_RenderData *data, MI_U16 fence)
-{
-    if (data->batching_enabled) {
-        if (data->fence_count >= MAX_BATCH_SIZE) {
-            flush_batch(data);  // Flush full batch
-        }
-        data->pending_fences[data->fence_count++] = fence;
-    } else {
-        MI_GFX_WaitAllDone(FALSE, fence);  // Immediate wait when batching disabled
-    }
-}
 
 
 static void MMIYOO_WindowEvent(SDL_Renderer *renderer, const SDL_WindowEvent *event)
@@ -2312,7 +2279,6 @@ static void MMIYOO_RenderPresent(SDL_Renderer *renderer)
                  data->viewport.w, data->viewport.h,
                  data->viewport.x, data->viewport.y);
 
-    flush_batch(data);
     GFX_FlushTextureFences();
 
     if (!data->is_target_texture || data->texture_blitted_to_screen) {
@@ -2364,6 +2330,12 @@ static void MMIYOO_DestroyTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 
     if (mmiyoo_texture) {
         if (mmiyoo_texture->uses_msys_memory) {
+            /* A BitBlit/QuickFill/DrawLine reading this texture's phyAddr may
+               still be in flight on the GFX engine; wait it out before the
+               memory is freed and potentially handed to an unrelated
+               allocation. */
+            GFX_FlushTextureFences();
+
             if (mmiyoo_texture->virAddr) {
                 MI_SYS_Munmap(mmiyoo_texture->virAddr, mmiyoo_texture->size);
             }
@@ -2388,7 +2360,6 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
 
     if (data) {
         if (data->initialized) {
-            flush_batch(data);
             MI_GFX_WaitAllDone(TRUE, 0);
             data->initialized = SDL_FALSE;
         }
@@ -2544,11 +2515,7 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
     data->viewport_enabled = SDL_FALSE;
     data->clip_enabled = SDL_FALSE;
     SDL_zero(data->clip_rect);
-    
-    // Initialize fence batching system
-    data->fence_count = 0;
-    data->batching_enabled = SDL_TRUE;  // Enable batching by default
-    
+
     // Initialize draw color to white (default SDL behavior)
     data->draw_color_r = 255;
     data->draw_color_g = 255;
