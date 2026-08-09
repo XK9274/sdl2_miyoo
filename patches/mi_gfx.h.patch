@@ -1,0 +1,29 @@
+--- a/mi_gfx.h
++++ b/mi_gfx.h
+@@ -53,6 +53,16 @@
+ //------------------------------------------------------------------------------------------------
+ MI_S32 MI_GFX_QuickFill(MI_GFX_Surface_t *pstDst, MI_GFX_Rect_t *pstDstRect,
+     MI_U32 u32ColorVal, MI_U16 *pu16Fence);
++
++//-------------------------------------------------------------------------------------------------
++/// Draw line
++/// @param  pstDst          \b IN: Target Surface info
++/// @param  pstLine          \b IN: Line pattern info
++/// @param  pu16Fence          \b OUT: wait fence
++/// @return MI_SUCCESS         - Success
++/// @return OTHER            - Failure
++//-------------------------------------------------------------------------------------------------
++MI_S32 MI_GFX_DrawLine(MI_GFX_Surface_t *pstDst, MI_GFX_Line_t *pstLine, MI_U16 *pu16Fence);
+ MI_S32 MI_GFX_GetAlphaThresholdValue(MI_U8 *pu8ThresholdValue);
+ MI_S32 MI_GFX_SetAlphaThresholdValue(MI_U8 u8ThresholdValue);
+ MI_S32 MI_GFX_BitBlit(MI_GFX_Surface_t *pstSrc, MI_GFX_Rect_t *pstSrcRect,
+@@ -66,6 +76,9 @@
+ //------------------------------------------------------------------------------------------------
+ MI_S32 MI_GFX_SetPalette(MI_GFX_ColorFmt_e eColorFmt, MI_GFX_Palette_t* pstPalette);
+ 
++MI_S32 MI_GFX_InitDev(MI_GFX_InitParam_t *pstInitParam);
++MI_S32 MI_GFX_DeInitDev(void);
++
+ #ifdef __cplusplus
+ }
+ #endif

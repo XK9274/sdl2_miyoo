@@ -1,0 +1,51 @@
+--- a/mi_gfx_datatype.h
++++ b/mi_gfx_datatype.h
+@@ -124,6 +124,36 @@
+ #define MI_ERR_GFX_DRV_FAIL_LOCKED MI_DEF_ERR(E_MI_MODULE_ID_GFX, E_MI_ERR_LEVEL_ERROR, E_MI_GFX_ERR_GFX_DRV_FAIL_LOCKED)
+ #define MI_ERR_GFX_DRV_FAIL_BLTADDR MI_DEF_ERR(E_MI_MODULE_ID_GFX, E_MI_ERR_LEVEL_ERROR, E_MI_GFX_ERR_GFX_DRV_FAIL_BLTADDR)
+ 
++//=============================================================================
++// GFX point
++//=============================================================================
++typedef struct MI_GFX_Point_s
++{
++    /// x coordinate
++    MI_S16 s16x;
++    /// y coordinate
++    MI_S16 s16y;
++} MI_GFX_Point_t;
++
++//=============================================================================
++// GFX line pattern infomation struct
++//=============================================================================
++typedef struct MI_GFX_Line_s
++{
++    /// start point of line
++    MI_GFX_Point_t stPointFrom;
++    /// end point of line
++    MI_GFX_Point_t stPointTo;
++    /// line width in pixel
++    MI_U16 u16Width;
++    /// Constant color or  Gradient color
++    MI_BOOL bColorGradient;
++    /// color range from start to end
++    MI_U32 u32ColorFrom;
++    ///
++    MI_U32 u32ColorTo;
++} MI_GFX_Line_t;
++
+ typedef struct MI_GFX_Rect_s
+ {
+     MI_S32 s32Xpos;
+@@ -219,4 +249,11 @@
+ }
+ #endif
+ 
++
++typedef struct MI_GFX_InitParam_s
++{
++    MI_U32 u32DevId;
++    MI_U8 *u8Data;
++} MI_GFX_InitParam_t;
++
+ #endif///_MI_GFX_DATATYPE_H_

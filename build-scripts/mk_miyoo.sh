@@ -265,6 +265,22 @@ clean_build_tree() {
     fi
 }
 
+VENDOR_GFX_INCLUDE_DIR="$SDL_DIR/build/vendor-include"
+stage_patched_gfx_headers() {
+    local toolchain_gfx_include="$TOOLCHAIN_ROOT/arm-linux-gnueabihf/libc/usr/include"
+
+    if [[ ! -f "$toolchain_gfx_include/mi_gfx.h" || ! -f "$toolchain_gfx_include/mi_gfx_datatype.h" ]]; then
+        echo -e "${RED}mi_gfx.h/mi_gfx_datatype.h not found under $toolchain_gfx_include${NC}" >&2
+        exit 1
+    fi
+
+    mkdir -p "$VENDOR_GFX_INCLUDE_DIR"
+    cp "$toolchain_gfx_include/mi_gfx.h" "$toolchain_gfx_include/mi_gfx_datatype.h" "$VENDOR_GFX_INCLUDE_DIR/"
+
+    patch -p1 -s -d "$VENDOR_GFX_INCLUDE_DIR" < "$SDL_DIR/patches/mi_gfx.h.patch"
+    patch -p1 -s -d "$VENDOR_GFX_INCLUDE_DIR" < "$SDL_DIR/patches/mi_gfx_datatype.h.patch"
+}
+
 if [[ "$CLEAN_REQUESTED" == true ]]; then
     clean_build_tree "$CLEAN_LEVEL"
 fi
@@ -340,6 +356,8 @@ fi
 pushd "$SDL_DIR" >/dev/null
 chmod -R a+wx . >/dev/null 2>&1 || true
 
+stage_patched_gfx_headers
+
 if [[ "$RUN_CONFIG" == true ]]; then
     echo -e "${YELLOW}Running autogen/configure...${NC}"
 
@@ -393,7 +411,7 @@ if [[ "$RUN_CONFIG" == true ]]; then
         CONFIGURE_ARGS+=("${CONFIGURE_EXTRA[@]}")
     fi
 
-    CPPFLAGS="-DMMIYOO -I${SDL_DIR}/include -I${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/include ${DEBUG_FLAGS}" \
+    CPPFLAGS="-DMMIYOO -I${VENDOR_GFX_INCLUDE_DIR} -I${SDL_DIR}/include -I${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/include ${DEBUG_FLAGS}" \
     CFLAGS="${OPT_FLAGS} ${DEBUG_FLAGS}" \
     LDFLAGS="${STRIP_FLAGS} -L${SDL_DIR} -L${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/lib" \
     LIBS="-lmi_sys -lmi_gfx -lmi_ao -lcam_os_wrapper -ldl ${LIBS:-}" \
