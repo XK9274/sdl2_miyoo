@@ -1663,7 +1663,11 @@ int My_QueueCopy(SDL_Renderer *renderer,
                  SDL_BlendMode blend_mode,
                  MI_GFX_Rotate_e extra_rotation,
                  SDL_RendererFlip flip,
-                 SDL_FPoint rotation_center)
+                 SDL_FPoint rotation_center,
+                 Uint8 mod_r,
+                 Uint8 mod_g,
+                 Uint8 mod_b,
+                 Uint8 mod_a)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
     MMIYOO_TextureData *src_texture_data;
@@ -1795,9 +1799,10 @@ int My_QueueCopy(SDL_Renderer *renderer,
         src_phy = src_texture_data->phyAddr;
     }
 
-    copy_result = GFX_Copy(pixels, src_phy, src, hw_dst, pitch, 0, (int)effective_rotation, mirror, blend_mode, &data->current_target_surface,
+    copy_result = GFX_Copy(pixels, src_phy, src, hw_dst, pitch, (int)effective_rotation, mirror, blend_mode, &data->current_target_surface,
                            clip_enabled ? &hw_clip : NULL, clip_enabled,
-                           texture->format, src_texture_data->mi_format, src_texture_data->bytes_per_pixel);
+                           texture->format, src_texture_data->mi_format, src_texture_data->bytes_per_pixel,
+                           mod_r, mod_g, mod_b, mod_a);
     if (copy_result != 0) {
         MMIYOO_LOG_WARN("QueueCopy: GFX_Copy failed (result=%d)", copy_result);
     }
@@ -2179,7 +2184,8 @@ static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd
                 data->is_target_texture = *queued_is_target_texture;
 
                 if (My_QueueCopy(renderer, texture, pixels, &src, &dstf, cmd->data.draw.blend,
-                                  E_MI_GFX_ROTATE_0, SDL_FLIP_NONE, default_center) != 0) {
+                                  E_MI_GFX_ROTATE_0, SDL_FLIP_NONE, default_center,
+                                  cmd->data.draw.r, cmd->data.draw.g, cmd->data.draw.b, cmd->data.draw.a) != 0) {
                     MMIYOO_LOG_WARN("RunCommandQueue COPY: My_QueueCopy failed");
                 }
 
@@ -2265,7 +2271,8 @@ static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd
                 data->is_target_texture = copydata->is_target_texture;
 
                 if (My_QueueCopy(renderer, texture, NULL, &copydata->srcrect, &dstf, cmd->data.draw.blend,
-                                  extra_rotation, copydata->flip, copydata->center) != 0) {
+                                  extra_rotation, copydata->flip, copydata->center,
+                                  cmd->data.draw.r, cmd->data.draw.g, cmd->data.draw.b, cmd->data.draw.a) != 0) {
                     MMIYOO_LOG_WARN("RunCommandQueue COPY_EX: My_QueueCopy failed");
                 }
 

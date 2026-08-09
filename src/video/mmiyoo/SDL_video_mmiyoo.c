@@ -188,7 +188,8 @@ static int video_handler(void *data)
                                  SDL_BLENDMODE_NONE,
                                  E_MI_GFX_ROTATE_0,
                                  SDL_FLIP_NONE,
-                                 default_center);
+                                 default_center,
+                                 255, 255, 255, 255);
 
                     SDL_RenderPresent(fb_renderer);
                 }
@@ -498,7 +499,6 @@ int GFX_Copy(const void *pixels,
              SDL_Rect srcrect,
              SDL_Rect dstrect,
              int pitch,
-             int alpha,
              int rotate,
              MI_GFX_Mirror_e mirror,
              SDL_BlendMode blend_mode,
@@ -507,7 +507,11 @@ int GFX_Copy(const void *pixels,
              SDL_bool clip_enabled,
              Uint32 src_format,
              MI_GFX_ColorFmt_e src_mi_format,
-             Uint32 bytes_per_pixel)
+             Uint32 bytes_per_pixel,
+             Uint8 mod_r,
+             Uint8 mod_g,
+             Uint8 mod_b,
+             Uint8 mod_a)
 {
 #ifdef MMIYOO
     SDL_bool use_staging_copy = SDL_TRUE;
@@ -706,6 +710,28 @@ int GFX_Copy(const void *pixels,
             break;
     }
 
+    /* SDL_SetTextureColorMod/SDL_SetTextureAlphaMod: MI_GFX has no per-draw
+     * tint parameter of its own, but MI_GFX_Opt_t's DFB blend flags support
+     * exactly this -- E_MI_GFX_DFB_BLEND_COLORIZE multiplies the source
+     * pixel's RGB by u32GlobalSrcConstColor before the blend equation runs,
+     * and E_MI_GFX_DFB_BLEND_COLORALPHA does the same for alpha. Skip
+     * setting the flags entirely when there's nothing to modulate (the
+     * overwhelmingly common case) to avoid any hardware-behavior surprises
+     * on the default path. Color packed A8:R8:G8:B8 per the QuickFill
+     * u32ColorVal convention (GFX - SigmaStarDocs.txt Sec 1.4). */
+    if (mod_r != 255 || mod_g != 255 || mod_b != 255 || mod_a != 255) {
+        MI_U32 flags = (MI_U32)gfx.hw.opt.eDFBBlendFlag;
+        if (mod_r != 255 || mod_g != 255 || mod_b != 255) {
+            flags |= (MI_U32)E_MI_GFX_DFB_BLEND_COLORIZE;
+        }
+        if (mod_a != 255) {
+            flags |= (MI_U32)E_MI_GFX_DFB_BLEND_COLORALPHA;
+        }
+        gfx.hw.opt.eDFBBlendFlag = (MI_Gfx_DfbBlendFlags_e)flags;
+        gfx.hw.opt.u32GlobalSrcConstColor = ((MI_U32)mod_a << 24) | ((MI_U32)mod_r << 16) |
+                                            ((MI_U32)mod_g << 8) | (MI_U32)mod_b;
+    }
+
     /* Apply clipping if enabled; incoming clip rect is already in target coordinate space */
     if (clip_enabled && clip_rect) {
         gfx.hw.opt.stClipRect.s32Xpos = clip_rect->x;
@@ -897,8 +923,63 @@ void GFX_SwapBuffers(void)
         MI_SYS_FlushInvCache(gfx.back.virAddr, copy_bytes);
     }
 
+    /* Not used for the present-copy: MI_SYS_MemcpyPa has no completion
+     * fence in the SDK and measured ~0.008ms here vs ~1.2-4ms for a fenced
+     * MI_GFX_BitBlit of the same frame -- too fast to be a finished ~1.2MB
+     * DMA transfer, so the next frame could start overwriting gfx.back
+     * before this copy out of it was actually done. Kept only as a
+     * reference; MI_SYS_MemcpyPa is still used elsewhere for other buffer
+     * ops where that's not a concern. */
+    /*
     if (MI_SYS_MemcpyPa(gfx.fb.phyAddr, gfx.back.phyAddr, copy_bytes) != MI_SUCCESS) {
         MMIYOO_LOG_WARN("GFX_SwapBuffers: MI_SYS_MemcpyPa failed (bytes=%u)", copy_bytes);
+    }
+    */
+    {
+        MI_GFX_Surface_t src_surf;
+        MI_GFX_Surface_t dst_surf;
+        MI_GFX_Rect_t src_rect;
+        MI_GFX_Rect_t dst_rect;
+        MI_GFX_Opt_t opt;
+        MI_U16 fence = 0;
+        MI_S32 result;
+
+        memset(&src_surf, 0, sizeof(src_surf));
+        src_surf.phyAddr = gfx.back.phyAddr;
+        src_surf.eColorFmt = E_MI_GFX_FMT_ARGB8888;
+        src_surf.u32Width = GFX_GetFrameWidth();
+        src_surf.u32Height = GFX_GetFrameHeight();
+        src_surf.u32Stride = GFX_GetFrameStride();
+
+        dst_surf = src_surf;
+        dst_surf.phyAddr = gfx.fb.phyAddr;
+
+        memset(&src_rect, 0, sizeof(src_rect));
+        src_rect.u32Width = src_surf.u32Width;
+        src_rect.u32Height = src_surf.u32Height;
+        dst_rect = src_rect;
+
+        memset(&opt, 0, sizeof(opt));
+        opt.eRotate = E_MI_GFX_ROTATE_0;
+        opt.eMirror = E_MI_GFX_MIRROR_NONE;
+        opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+        /* Straight opaque copy: src*ONE + dst*ZERO. Leaving these at their
+         * memset zero value (E_MI_GFX_DFB_BLD_ZERO for both) computes
+         * src*0 + dst*0 = 0 for every pixel regardless of eDFBBlendFlag,
+         * i.e. a solid black frame -- this bit it before. */
+        opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
+        opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
+        opt.stClipRect.s32Xpos = 0;
+        opt.stClipRect.s32Ypos = 0;
+        opt.stClipRect.u32Width = src_surf.u32Width;
+        opt.stClipRect.u32Height = src_surf.u32Height;
+
+        result = MI_GFX_BitBlit(&src_surf, &src_rect, &dst_surf, &dst_rect, &opt, &fence);
+        if (result == MI_SUCCESS) {
+            MI_GFX_WaitAllDone(FALSE, fence);
+        } else {
+            MMIYOO_LOG_WARN("GFX_SwapBuffers: MI_GFX_BitBlit present-copy failed (result=%d)", result);
+        }
     }
 #endif
 }

@@ -115,7 +115,6 @@ int GFX_Copy(const void *pixels,
              SDL_Rect srcrect,
              SDL_Rect dstrect,
              int pitch,
-             int alpha,
              int rotate,
              MI_GFX_Mirror_e mirror,
              SDL_BlendMode blend_mode,
@@ -124,7 +123,11 @@ int GFX_Copy(const void *pixels,
              SDL_bool clip_enabled,
              Uint32 src_format,
              MI_GFX_ColorFmt_e src_mi_format,
-             Uint32 bytes_per_pixel);
+             Uint32 bytes_per_pixel,
+             Uint8 mod_r,
+             Uint8 mod_g,
+             Uint8 mod_b,
+             Uint8 mod_a);
 
 // Single/double buffer management
 MI_PHY GFX_GetFrameBuffer(void);
@@ -147,7 +150,11 @@ int My_QueueCopy(SDL_Renderer *renderer,
                  SDL_BlendMode blend_mode,
                  MI_GFX_Rotate_e extra_rotation,
                  SDL_RendererFlip flip,
-                 SDL_FPoint rotation_center);
+                 SDL_FPoint rotation_center,
+                 Uint8 mod_r,
+                 Uint8 mod_g,
+                 Uint8 mod_b,
+                 Uint8 mod_a);
 
 #ifndef MMIYOO_LOG_DEBUG
 #define MMIYOO_LOG_PREFIX "[MMIYOO] "
