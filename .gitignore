@@ -19,3 +19,11 @@ include/SDL_revision.h
 include/neon.h
 libneonarmmiyoo.a
 libneonarmmiyoo.so
+
+# Vendor SigmaStar SDK headers identical to the toolchain image's copy
+# (/opt/miyoomini-toolchain/arm-linux-gnueabihf/libc/usr/include) -- not
+# vendored here. mi_gfx.h/mi_gfx_datatype.h are kept: they're a newer SDK
+# revision with MI_GFX_DrawLine's types, which the toolchain's copy lacks.
+include/mi_*.h
+!include/mi_gfx.h
+!include/mi_gfx_datatype.h
