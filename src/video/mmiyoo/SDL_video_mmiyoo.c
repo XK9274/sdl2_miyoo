@@ -681,6 +681,16 @@ int GFX_Copy(const void *pixels,
     /* Blend-factor mapping follows SigmaStar docs (see
      *   GFX - SigmaStarDocs copy.txt §3.9/3.10 for DfbBldOp_e and DfbBlendFlags_e
      * and SDL's composed modes in src/render/SDL_render.c). */
+    /* E_MI_GFX_DFB_BLEND_ALPHACHANNEL = "combine with source alpha value"
+     * (GFX - SigmaStarDocs.txt Sec 2.10) -- required whenever a blend
+     * factor below references SRCALPHA/INVSRCALPHA, or the hardware never
+     * actually reads the source's real per-pixel alpha channel and the
+     * SRCALPHA/INVSRCALPHA factors have no per-pixel data to work from.
+     * Without it, GL-rendered RGBA FBO textures and TTF text (whose
+     * "transparent" pixels are RGB(0,0,0) with alpha=0) paint their raw
+     * black RGB as fully opaque instead of being blended out -- the
+     * "black square" bug. NONE/MOD don't reference alpha factors, so they
+     * don't need it. */
     switch (blend_mode) {
         case SDL_BLENDMODE_NONE:
             gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
@@ -690,7 +700,7 @@ int GFX_Copy(const void *pixels,
         case SDL_BLENDMODE_ADD:
             gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
             gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_ALPHACHANNEL;
             break;
         case SDL_BLENDMODE_MOD:
             gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
@@ -700,13 +710,13 @@ int GFX_Copy(const void *pixels,
         case SDL_BLENDMODE_MUL:
             gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_DESTCOLOR;
             gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_ALPHACHANNEL;
             break;
         default:
             /* SDL_BLENDMODE_BLEND and any unknown modes fall back to standard alpha blending */
             gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
             gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_ALPHACHANNEL;
             break;
     }
 
