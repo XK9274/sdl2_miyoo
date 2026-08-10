@@ -35,8 +35,8 @@ VSync mode getter: `MMIYOO_GetVSyncMode`
 Window focus restore: `MMIYOO_RaiseWindow`
 Mouse bounds setter: `MMIYOO_SetMouseBounds`
 Video driver availability check: `MMIYOO_Available`
-Framebuffer clear: `GFX_Clear`
-Framebuffer init/teardown: `fb_init`, `fb_uninit`
+Framebuffer clear: `FB_Clear`
+Framebuffer init/teardown: `FB_Init`, `FB_Uninit`
 Present (copy or real page-flip depending on vsync mode): `GFX_SwapBuffers`
 GFX blit wrapper (blend/colormod/clip): `GFX_Copy`
 Texture fence batching: `GFX_FlushTextureFences`, `GFX_AddTextureFence`

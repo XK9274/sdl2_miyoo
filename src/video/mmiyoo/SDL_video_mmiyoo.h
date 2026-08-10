@@ -112,7 +112,7 @@ typedef struct _GFX {
     int page_flip_index;
 } GFX;
 
-void GFX_Clear(void);
+void FB_Clear(void);
 void GFX_FlushTextureFences(void);
 void GFX_AddTextureFence(MI_U16 fence);
 int GFX_Copy(const void *pixels,
@@ -144,8 +144,8 @@ SDL_bool GFX_IsPageFlipEnabled(void);
 void GFX_SwapBuffers(SDL_bool wait_for_vsync);
 void *GFX_GetFrameBufferVirtual(void);
 
-int fb_init(void);
-int fb_uninit(void);
+int FB_Init(void);
+int FB_Uninit(void);
 
 int draw_pen(const void *pixels, int width, int pitch);
 int My_QueueCopy(SDL_Renderer *renderer,

@@ -216,7 +216,7 @@ static int video_handler(void *data)
 }
 
 #ifdef MMIYOO
-int fb_init(void)
+int FB_Init(void)
 {
     MI_U32 frame_stride;
     MI_U32 frame_bytes;
@@ -227,7 +227,7 @@ int fb_init(void)
         if (ret != MI_SUCCESS) {
             SDL_AtomicUnlock(&g_mmiyoo_sys_lock);
             SDL_LogError(SDL_LOG_CATEGORY_VIDEO,
-                         "fb_init: MI_SYS_Init failed (0x%x)", ret);
+                         "FB_Init: MI_SYS_Init failed (0x%x)", ret);
             return -1;
         }
     }
@@ -242,7 +242,7 @@ int fb_init(void)
             }
             SDL_AtomicUnlock(&g_mmiyoo_sys_lock);
             SDL_LogError(SDL_LOG_CATEGORY_VIDEO,
-                         "fb_init: MI_GFX_Open failed (0x%x)", ret);
+                         "FB_Init: MI_GFX_Open failed (0x%x)", ret);
             return -1;
         }
     }
@@ -270,11 +270,11 @@ int fb_init(void)
             gfx.vinfo = verify;
             ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
             gfx.page_flip_enabled = SDL_TRUE;
-            MMIYOO_LOG_DEBUG("fb_init: /dev/l vsync active (panel honours FBIOPAN_DISPLAY)");
+            MMIYOO_LOG_DEBUG("FB_Init: /dev/l vsync active (panel honours FBIOPAN_DISPLAY)");
         } else {
             gfx.vinfo.yres_virtual = gfx.vinfo.yres;
             ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
-            MMIYOO_LOG_WARN("fb_init: /dev/l vsync requested but panel rejected panning, falling back to present-copy");
+            MMIYOO_LOG_WARN("FB_Init: /dev/l vsync requested but panel rejected panning, falling back to present-copy");
         }
     } else {
         gfx.vinfo.yres_virtual = gfx.vinfo.yres;
@@ -329,7 +329,7 @@ int fb_init(void)
             if (MI_SYS_Mmap(gfx.back.phyAddr, gfx.back.length, &gfx.back.virAddr, TRUE) == MI_SUCCESS) {
                 MI_SYS_MemsetPa(gfx.back.phyAddr, 0, gfx.back.length);
             } else {
-                MMIYOO_LOG_WARN("fb_init: failed to map back buffer, disabling double buffer");
+                MMIYOO_LOG_WARN("FB_Init: failed to map back buffer, disabling double buffer");
                 MI_SYS_MMA_Free(gfx.back.phyAddr);
                 gfx.back.phyAddr = 0;
                 gfx.back.length = 0;
@@ -337,7 +337,7 @@ int fb_init(void)
                 gfx.double_buffer_enabled = SDL_FALSE;
             }
         } else {
-            MMIYOO_LOG_WARN("fb_init: failed to allocate back buffer, disabling double buffer");
+            MMIYOO_LOG_WARN("FB_Init: failed to allocate back buffer, disabling double buffer");
             gfx.double_buffer_enabled = SDL_FALSE;
         }
     }
@@ -345,7 +345,7 @@ int fb_init(void)
     return 0;
 }
 
-int fb_uninit(void)
+int FB_Uninit(void)
 {
     mmiyoo_wait_gfx_idle();
 
@@ -398,7 +398,7 @@ int fb_uninit(void)
             MI_S32 ret = MI_SYS_Exit();
             if (ret != MI_SUCCESS) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
-                            "fb_uninit: MI_SYS_Exit returned 0x%x", ret);
+                            "FB_Uninit: MI_SYS_Exit returned 0x%x", ret);
             }
         }
     }
@@ -413,9 +413,9 @@ void GFX_Init(void)
     signal(SIGBUS, crash_handler);
     signal(SIGABRT, crash_handler);
 
-    if (fb_init() != 0) {
+    if (FB_Init() != 0) {
         SDL_LogError(SDL_LOG_CATEGORY_VIDEO,
-                     "GFX_Init: fb_init failed");
+                     "GFX_Init: FB_Init failed");
         return;
     }
     
@@ -480,9 +480,9 @@ void GFX_Quit(void)
         gfx.video_thread = NULL;
     }
     
-    GFX_Clear();
+    FB_Clear();
 
-    fb_uninit();
+    FB_Uninit();
     
     // Properly cleanup MI_SYS allocated memory
     if (gfx.thread.pixels) {
@@ -517,7 +517,7 @@ void GFX_Quit(void)
     }
 }
 
-void GFX_Clear(void)
+void FB_Clear(void)
 {
 #ifdef MMIYOO
     if (gfx.fb.phyAddr && gfx.fb.length > 0) {
