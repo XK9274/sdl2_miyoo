@@ -1,121 +1,69 @@
 # Miyoo SDL Feature Summary
 
-Brief summary of current `mmiyoo` backend support and the relevant functions/files.
+## Hints
 
-## Build and Platform
+- `SDL_MMIYOO_INPUT_MODE` -- `"keyboard"` / `"joystick"` (unset = joystick), live-switchable
+- `SDL_MMIYOO_VSYNC_MODE` -- `"off"` / `"adaptive"` (default) / `"strict"` (real `/dev/l`-paced panning, launch-time only)
+- `SDL_MMIYOO_DEBUG` / `SDL_MMIYOO_DEBUG_VERBOSE` -- raise driver log verbosity
+- `SDL_MMIYOO_GEOMETRY_STATS` -- log per-present triangle/span stats
+- `SDL_MMIYOO_GEOMETRY_BAND_HEIGHT` -- triangle rasterizer span band height (1-32, default 3)
+- `SDL_VIDEO_MMIYOO_SAVE_FRAMES` -- dump each presented frame to a BMP
 
-- Miyoo platform configure path: `configure.ac` `CheckMMIYOO`
-- Build script: `build-scripts/mk_miyoo.sh`
-- Docker bootstrap: `--docker`
-- Docker/toolchain rebuild: `--rebuild-container`
-- External neon helper build/link: `libneonarmmiyoo` from `neon-arm-library-miyoo`
-- Clean levels: `--clean build|deps|all`, `--clean-only build|deps|all`
+## Miyoo-specific functions
 
-## Shared Miyoo Core
+Sysfs write helper: `MMIYOO_WriteSysfs`
+Integer file read helper: `MMIYOO_ReadIntFile`
+Device model detection: `MMIYOO_GetDeviceModel`
+Keycode to button-bitmask mapping: `MMIYOO_KeycodeToButtonMask`
+Default framebuffer info: `MMIYOO_GetDefaultFramebufferInfo`
+Framebuffer info from an open fd: `MMIYOO_GetFramebufferInfoFromFD`
+Framebuffer metrics refresh: `MMIYOO_UpdateFramebufferMetrics`
+Rumble capability probe: `MMIYOO_HasRumble`
+Rumble GPIO control: `MMIYOO_SetRumble`
+Rumble GPIO init: `MMIYOO_InitRumbleGPIO`
+Battery percent probe: `MMIYOO_GetBatteryPercent`
+Charging-state probe: `MMIYOO_IsCharging`
+Battery percent from raw ADC: `MMIYOO_BatteryPercentFromADC`
+Mini battery ADC read: `MMIYOO_ReadMiniBatteryADC`
+Charging state via GPIO: `MMIYOO_IsChargingGPIO`
+Charging/battery via axp_test: `MMIYOO_ReadAxpTest`
+Shared /dev/input/event0 reader init/deinit: `MMIYOO_InputInit`, `MMIYOO_InputDeinit`
+Shared input reader thread: `MMIYOO_InputThread`
+Keypad bitmap snapshot: `MMIYOO_GetKeypadBitmap`
+Keyboard/joystick mode getters: `MMIYOO_IsKeyboardModeActive`, `MMIYOO_IsJoystickModeActive`
+VSync mode getter: `MMIYOO_GetVSyncMode`
+Window focus restore: `MMIYOO_RaiseWindow`
+Mouse bounds setter: `MMIYOO_SetMouseBounds`
+Video driver availability check: `MMIYOO_Available`
+Framebuffer clear: `GFX_Clear`
+Framebuffer init/teardown: `fb_init`, `fb_uninit`
+Present (copy or real page-flip depending on vsync mode): `GFX_SwapBuffers`
+GFX blit wrapper (blend/colormod/clip): `GFX_Copy`
+Texture fence batching: `GFX_FlushTextureFences`, `GFX_AddTextureFence`
+Framebuffer/double-buffer accessors: `GFX_GetFrameBuffer`, `GFX_GetFrameBufferVirtual`, `GFX_GetFrameStride`, `GFX_GetFrameWidth`, `GFX_GetFrameHeight`, `GFX_IsDoubleBuffered`, `GFX_IsPageFlipEnabled`
+GLES default profile config: `MMIYOO_GLES_DefaultProfileConfig`
+GLES buffer-settings extension hook: `glUpdateBufferSettings`
+Sample-rate selection: `MMIYOO_SelectSampleRate`
+Gamepad mapping: `MMIYOO_JoystickGetGamepadMapping`
+Rumble auto-stop timer: `MMIYOO_HapticTimer`
 
-- Core file: `src/core/mmiyoo/SDL_mmiyoo.c`
-- Core header: `src/core/mmiyoo/SDL_mmiyoo.h`
-- Sysfs write helper: `MMIYOO_WriteSysfs`
-- Integer file read helper: `MMIYOO_ReadIntFile`
-- Device model detection: `MMIYOO_GetDeviceModel`
-- Linux keycode to Miyoo button bit mapping: `MMIYOO_KeycodeToButtonMask`
-- Rumble capability probe: `MMIYOO_HasRumble`
-- Rumble GPIO control: `MMIYOO_SetRumble`
-- Battery percent probe: `MMIYOO_GetBatteryPercent`
-- Charging-state probe: `MMIYOO_IsCharging`
+## SDL driver functionality supported
 
-## Video
+**Video** (`SDL_VideoDevice`): `CreateDevice`, `DeleteDevice`, `VideoInit`, `VideoQuit`, `SetDisplayMode` (no-op), `CreateWindow`, `CreateWindowFrom`, `DestroyWindow`, `PumpEvents`, `CreateWindowFramebuffer`, `UpdateWindowFramebuffer`, `DestroyWindowFramebuffer`
 
-- Video backend registration: `SDL_VIDEO_DRIVER_MMIYOO`
-- Main video backend: `src/video/mmiyoo/SDL_video_mmiyoo.c`
-- Framebuffer backend: `src/video/mmiyoo/SDL_framebuffer_mmiyoo.c`
-- Event backend: `src/video/mmiyoo/SDL_event_mmiyoo.c`
-- Event lifecycle: `MMIYOO_EventInit`, `MMIYOO_EventDeinit`
-- Event pumping: `MMIYOO_PumpEvents`
-- Mouse bounds helper: `MMIYOO_SetMouseBounds`
-- Raw `/dev/input/event0` keyboard-style input is still supported by the video event backend.
+**Render** (`SDL_Renderer`, driver name `MMIYOO`): `CreateRenderer`, `WindowEvent`, `CreateTexture`, `UpdateTexture`, `LockTexture`, `UnlockTexture`, `SetTextureScaleMode` (no-op), `SetRenderTarget`, `QueueSetViewport`, `QueueSetDrawColor`, `QueueDrawPoints`, `QueueDrawLines`, `QueueGeometry`, `QueueFillRects`, `QueueCopy`, `QueueCopyEx`, `RunCommandQueue`, `RenderPresent`, `DestroyTexture`, `DestroyRenderer`, `SetVSync`
+Not supported: `RenderReadPixels`
 
-## Rendering
+**Audio** (`SDL_AudioDriverImpl`, driver name `MMIYOO`): `OpenDevice`, `WaitDevice`, `PlayDevice`, `GetDeviceBuf`, `CloseDevice`
+Not supported: capture (`OnlyHasDefaultOutputDevice`)
 
-- Render backend: `src/render/mmiyoo/SDL_render_mmiyoo.c`
-- SDL renderer driver: `SDL_RenderDriver MMIYOO_RenderDriver`
-- MI GFX accelerated rendering paths are present.
-- MI SYS texture/memory tracking is present.
-- Fence batching is present for MI GFX work.
-- NEON helper integration is present for accelerated software/fallback work.
-- Non-zero-angle `SDL_RenderCopyEx` remains a limited/fallback case and warns once.
+**Joystick** (`SDL_JoystickDriver`): `Init`, `GetCount`, `Detect`, `GetDeviceName`, `GetDeviceGUID`, `GetDeviceInstanceID`, `Open`, `Update`, `Close`, `Quit`, `Rumble`, `GetCapabilities`, `GetGamepadMapping`
+Not supported: `GetDevicePlayerIndex`/`SetDevicePlayerIndex` (stub), `RumbleTriggers`, `SetLED`, `SendEffect`, `SetSensorsEnabled`
 
-## OpenGL ES
+**Haptic** (`SDL_SYS_Haptic*`): `Init`, `NumHaptics`, `HapticName`, `HapticOpen`, `HapticOpenFromJoystick`, `JoystickIsHaptic`, `JoystickSameHaptic`, `HapticClose`, `HapticQuit`, `HapticNewEffect`, `HapticUpdateEffect`, `HapticDestroyEffect`, `HapticRunEffect`, `HapticStopEffect`, `HapticStopAll`, `HapticGetEffectStatus`, `HapticPause`, `HapticUnpause`
+Effect type supported: `SDL_HAPTIC_LEFTRIGHT` only
+Not supported: `HapticMouse`, `SetAutocenter`
 
-- GLES backend: `src/video/mmiyoo/SDL_opengles_mmiyoo.c`
-- GLES header: `src/video/mmiyoo/SDL_opengles_mmiyoo.h`
-- Build gates: `SDL_VIDEO_OPENGL_EGL` and `SDL_VIDEO_OPENGL_ES2`
-- Default ES profile config: `MMIYOO_GLES_DefaultProfileConfig`
-- Runtime EGL extension lookup is used for `eglUpdateBufferSettings`.
-- Swap interval query support: `glGetSwapInterval`
+**Power** (`SDL_GetPowerInfo`): supported, via `SDL_GetPowerInfo_MMIYOO` -- no time-remaining estimate (`seconds` always -1)
 
-## Audio
-
-- Audio backend registration: `SDL_AUDIO_DRIVER_MMIYOO`
-- Audio backend: `src/audio/mmiyoo/SDL_audio_mmiyoo.c`
-- Dynamic sample-rate selection is supported.
-- MI AO open/playback/close path is implemented.
-- Close path clears channel buffer, disables channel/device, and clears public attributes.
-
-## Joystick
-
-- Joystick backend registration: `SDL_JOYSTICK_MMIYOO`
-- Joystick backend: `src/joystick/mmiyoo/SDL_joystick_mmiyoo.c`
-- Device count: `MMIYOO_JoystickGetCount` returns one synthetic joystick.
-- Device name: `MMIYOO_JoystickGetDeviceName` returns `MMiyoo Joystick`.
-- Device open: `MMIYOO_JoystickOpen`
-- Poll/update: `MMIYOO_JoystickUpdate`
-- Close/quit: `MMIYOO_JoystickClose`, `MMIYOO_JoystickQuit`
-- Button events: `SDL_PrivateJoystickButton`
-- Axis events: `SDL_PrivateJoystickAxis`
-- D-pad is mirrored to axes 0 and 1.
-- Auto gamepad mapping: `MMIYOO_JoystickGetGamepadMapping`
-- Rumble through joystick API: `MMIYOO_JoystickRumble`
-- Capabilities: `MMIYOO_JoystickGetCapabilities` reports `SDL_JOYCAP_RUMBLE` when GPIO rumble is available.
-
-## Haptic / Rumble
-
-- Haptic backend registration: `SDL_HAPTIC_MMIYOO`
-- Haptic backend: `src/haptic/mmiyoo/SDL_syshaptic.c`
-- Init/count/name: `SDL_SYS_HapticInit`, `SDL_SYS_NumHaptics`, `SDL_SYS_HapticName`
-- Open/close: `SDL_SYS_HapticOpen`, `SDL_SYS_HapticClose`
-- Joystick haptic bridge: `SDL_SYS_JoystickIsHaptic`, `SDL_SYS_HapticOpenFromJoystick`, `SDL_SYS_JoystickSameHaptic`
-- Supported effect type: `SDL_HAPTIC_LEFTRIGHT`
-- Effect lifecycle: `SDL_SYS_HapticNewEffect`, `SDL_SYS_HapticUpdateEffect`, `SDL_SYS_HapticDestroyEffect`
-- Playback: `SDL_SYS_HapticRunEffect`, `SDL_SYS_HapticStopEffect`, `SDL_SYS_HapticStopAll`
-- Status: `SDL_SYS_HapticGetEffectStatus`
-- Pause/unpause: `SDL_SYS_HapticPause`, `SDL_SYS_HapticUnpause`
-
-## Power
-
-- Power backend registration: `SDL_POWER_MMIYOO`
-- Power backend: `src/power/mmiyoo/SDL_syspower.c`
-- SDL entry point served: `SDL_GetPowerInfo`
-- Miyoo implementation: `SDL_GetPowerInfo_MMIYOO`
-- Percent sources:
-  - `/tmp/percBat`
-  - Miyoo Mini Plus model 354 fallback via `/customer/app/axp_test`
-  - Miyoo Mini ADC fallback via `/dev/sar`
-- Charging sources:
-  - Miyoo Mini Plus model 354 fallback via `/customer/app/axp_test`
-  - GPIO59 fallback
-- Reports `SDL_POWERSTATE_CHARGING`, `SDL_POWERSTATE_CHARGED`, `SDL_POWERSTATE_ON_BATTERY`, or falls through to unknown when no definitive source exists.
-
-## Diagnostics
-
-- Unsupported-operation callsite logging: `SDL_Unsupported_REAL`
-- Hint: `SDL_HINT_REPORT_UNSUPPORTED_OPERATIONS`
-- Renderer/window/texture magic diagnostics were added in core SDL paths.
-
-## Known Future Work
-
-- Verify joystick/gamecontroller/haptic/power on device with test apps.
-- Decide whether Miyoo input should have one shared core event reader instead of separate video and joystick readers opening `/dev/input/event0`.
-- Add benchmark support through a central helper/hook only.
-- Detect active framebuffer geometry from `fbset` for devices with different screen sizes.
-- Continue reviewing MI SYS allocation and texture memory handling in the renderer.
+**GLES** (`SDL_GLDriverData`, built only with `--enable-gles`): `glLoadLibrary`, `glGetProcAddress`, `glUnloadLibrary`, `glCreateContext`, `glMakeCurrent`, `glDeleteContext`, `glSwapWindow`, `glSetSwapInterval`, `glGetSwapInterval`
