@@ -144,16 +144,16 @@ void MMIYOO_PumpEvents(_THIS)
         return;
     }
 
-    /* SELECT held as a modifier: X = vsync on/off, A = adaptive/strict.
-       Synthesizes the same SDLK_v/SDLK_m hotkeys the benchmarks already
-       listen for (see controller_input.h BTN_VSYNC_TOGGLE/BTN_VSYNC_MODE_TOGGLE),
-       so nothing on the app side needs to change. SELECT's own key (RCTRL)
-       still fires as a plain tap on release if no combo was used during the
-       hold, matching each suite's existing "tap SELECT" handling (e.g. reset
-       metrics) -- see bench_driver_translate_button_event's joystick-mode
-       mirror of this same logic in common/driver_support.c. While SELECT is
-       held, SELECT/X/A are masked out of keypad_bitmaps below so the generic
-       per-bit loop doesn't also forward their normal keys (RCTRL/LSHIFT/SPACE)
+    /* SELECT held as a modifier: X = vsync off/adaptive toggle. Synthesizes
+       the same SDLK_v hotkey the benchmarks already listen for (see
+       controller_input.h BTN_VSYNC_TOGGLE), so nothing on the app side
+       needs to change. SELECT's own key (RCTRL) still fires as a plain tap
+       on release if no combo was used during the hold, matching each
+       suite's existing "tap SELECT" handling (e.g. reset metrics) -- see
+       bench_driver_translate_button_event's joystick-mode mirror of this
+       same logic in common/driver_support.c. While SELECT is held,
+       SELECT/X are masked out of keypad_bitmaps below so the generic
+       per-bit loop doesn't also forward their normal keys (RCTRL/LSHIFT)
        to the game. */
     {
         static uint32_t select_was_held = 0;
@@ -169,10 +169,6 @@ void MMIYOO_PumpEvents(_THIS)
                 select_combo_used = 1;
                 SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_v));
                 SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_v));
-            } else if (!select_combo_used && (keypad_bitmaps & (1u << MYKEY_A))) {
-                select_combo_used = 1;
-                SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_m));
-                SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_m));
             }
         } else if (select_was_held && !select_combo_used) {
             SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_RCTRL));
@@ -182,7 +178,7 @@ void MMIYOO_PumpEvents(_THIS)
         select_was_held = select_bit;
 
         if (select_bit) {
-            keypad_bitmaps &= ~((1u << MYKEY_SELECT) | (1u << MYKEY_X) | (1u << MYKEY_A));
+            keypad_bitmaps &= ~((1u << MYKEY_SELECT) | (1u << MYKEY_X));
         }
     }
 

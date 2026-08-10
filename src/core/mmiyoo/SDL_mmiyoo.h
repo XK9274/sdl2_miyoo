@@ -100,9 +100,18 @@ extern Uint32 MMIYOO_GetKeypadBitmap(void);
 extern SDL_bool MMIYOO_IsKeyboardModeActive(void);
 extern SDL_bool MMIYOO_IsJoystickModeActive(void);
 
-/* Skip the vsync wait if already past frame budget. Unset = adaptive, "0" = strict. */
-#define SDL_HINT_MMIYOO_VSYNC_ADAPTIVE "SDL_MMIYOO_VSYNC_ADAPTIVE"
-extern SDL_bool MMIYOO_IsVSyncAdaptive(void);
+/* Present pacing. Unset/anything unrecognized = adaptive. "strict" is read
+ * once at fb_init (locks in the /dev/l panning buffer layout); off/adaptive
+ * are read live every present. */
+#define SDL_HINT_MMIYOO_VSYNC_MODE "SDL_MMIYOO_VSYNC_MODE"
+
+typedef enum {
+    MMIYOO_VSYNC_MODE_OFF,
+    MMIYOO_VSYNC_MODE_ADAPTIVE, /* default, and any unrecognized/unset value */
+    MMIYOO_VSYNC_MODE_STRICT   /* real /dev/l panning; fb_init-time only */
+} MMIYOO_VSyncMode_e;
+
+extern MMIYOO_VSyncMode_e MMIYOO_GetVSyncMode(void);
 
 #endif /* SDL_mmiyoo_h_ */
 

@@ -250,13 +250,36 @@ int fb_init(void)
     SDL_AtomicUnlock(&g_mmiyoo_sys_lock);
 
     gfx.double_buffer_enabled = SDL_TRUE;
+    gfx.page_flip_enabled = SDL_FALSE;
+    gfx.page_flip_index = 0;
 
     gfx.fb_dev = open("/dev/fb0", O_RDWR);
     ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
     ioctl(gfx.fb_dev, FBIOGET_VSCREENINFO, &gfx.vinfo);
     gfx.vinfo.yoffset = 0;
-    gfx.vinfo.yres_virtual = gfx.vinfo.yres;
-    ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
+
+    if (MMIYOO_GetVSyncMode() == MMIYOO_VSYNC_MODE_STRICT) {
+        /* Try real panning double buffering: two pages in one fb0 mapping. */
+        struct fb_var_screeninfo verify;
+
+        gfx.vinfo.yres_virtual = gfx.vinfo.yres * 2;
+        ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
+        ioctl(gfx.fb_dev, FBIOGET_VSCREENINFO, &verify);
+
+        if (verify.yres_virtual >= gfx.vinfo.yres * 2) {
+            gfx.vinfo = verify;
+            ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
+            gfx.page_flip_enabled = SDL_TRUE;
+            MMIYOO_LOG_DEBUG("fb_init: /dev/l vsync active (panel honours FBIOPAN_DISPLAY)");
+        } else {
+            gfx.vinfo.yres_virtual = gfx.vinfo.yres;
+            ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
+            MMIYOO_LOG_WARN("fb_init: /dev/l vsync requested but panel rejected panning, falling back to present-copy");
+        }
+    } else {
+        gfx.vinfo.yres_virtual = gfx.vinfo.yres;
+        ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
+    }
 
     MMIYOO_UpdateFramebufferMetrics();
 
@@ -272,18 +295,22 @@ int fb_init(void)
     }
 
     gfx.fb.phyAddr = gfx.finfo.smem_start;
-    gfx.fb.length = (gfx.finfo.smem_len > 0) ? gfx.finfo.smem_len : frame_bytes;
-    if (gfx.fb.length == 0) {
-        gfx.fb.length = frame_bytes;
+    if (gfx.page_flip_enabled) {
+        gfx.fb.length = frame_bytes * 2;
+    } else {
+        gfx.fb.length = (gfx.finfo.smem_len > 0) ? gfx.finfo.smem_len : frame_bytes;
+        if (gfx.fb.length == 0) {
+            gfx.fb.length = frame_bytes;
+        }
     }
-    g_framebuffer_size = gfx.fb.length;
+    g_framebuffer_size = frame_bytes;
     g_tmp_buffer_size = frame_bytes;
 
     if (gfx.fb.phyAddr != 0 && gfx.fb.length > 0) {
         MI_SYS_MemsetPa(gfx.fb.phyAddr, 0, gfx.fb.length);
         MI_SYS_Mmap(gfx.fb.phyAddr, gfx.fb.length, &gfx.fb.virAddr, TRUE);
     }
-    
+
     memset(&gfx.hw.opt, 0, sizeof(gfx.hw.opt));
 
     if (MI_SYS_MMA_Alloc(NULL, g_tmp_buffer_size, &gfx.overlay.phyAddr) == MI_SUCCESS) {
@@ -291,7 +318,12 @@ int fb_init(void)
         MI_SYS_Mmap(gfx.overlay.phyAddr, gfx.overlay.length, &gfx.overlay.virAddr, TRUE);
     }
 
-    if (gfx.double_buffer_enabled) {
+    if (gfx.page_flip_enabled) {
+        /* gfx.back is a view into the second page of the single fb0 mapping. */
+        gfx.back.phyAddr = gfx.fb.phyAddr + frame_bytes;
+        gfx.back.virAddr = (Uint8 *)gfx.fb.virAddr + frame_bytes;
+        gfx.back.length = frame_bytes;
+    } else if (gfx.double_buffer_enabled) {
         if (MI_SYS_MMA_Alloc(NULL, frame_bytes, &gfx.back.phyAddr) == MI_SUCCESS) {
             gfx.back.length = frame_bytes;
             if (MI_SYS_Mmap(gfx.back.phyAddr, gfx.back.length, &gfx.back.virAddr, TRUE) == MI_SUCCESS) {
@@ -317,12 +349,19 @@ int fb_uninit(void)
 {
     mmiyoo_wait_gfx_idle();
 
-    if (gfx.back.virAddr && gfx.back.length > 0) {
-        MI_SYS_Munmap(gfx.back.virAddr, gfx.back.length);
+    /* Page-flip mode: gfx.back is a view into gfx.fb's mapping, not its own MMA allocation. */
+    if (!gfx.page_flip_enabled) {
+        if (gfx.back.virAddr && gfx.back.length > 0) {
+            MI_SYS_Munmap(gfx.back.virAddr, gfx.back.length);
+            gfx.back.virAddr = NULL;
+        }
+        if (gfx.back.phyAddr) {
+            MI_SYS_MMA_Free(gfx.back.phyAddr);
+            gfx.back.phyAddr = 0;
+            gfx.back.length = 0;
+        }
+    } else {
         gfx.back.virAddr = NULL;
-    }
-    if (gfx.back.phyAddr) {
-        MI_SYS_MMA_Free(gfx.back.phyAddr);
         gfx.back.phyAddr = 0;
         gfx.back.length = 0;
     }
@@ -342,6 +381,7 @@ int fb_uninit(void)
     }
 
     gfx.double_buffer_enabled = SDL_FALSE;
+    gfx.page_flip_enabled = SDL_FALSE;
 
     SDL_AtomicLock(&g_mmiyoo_sys_lock);
     if (g_mmiyoo_gfx_refcount > 0) {
@@ -840,21 +880,35 @@ SDL_bool GFX_IsDoubleBuffered(void)
 #endif
 }
 
+SDL_bool GFX_IsPageFlipEnabled(void)
+{
+#ifdef MMIYOO
+    return gfx.page_flip_enabled;
+#else
+    return SDL_FALSE;
+#endif
+}
+
 void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 {
 #ifdef MMIYOO
     MI_U32 copy_bytes;
+    MI_U32 frame_bytes;
+    /* Present pacing is fully driven by SDL_HINT_MMIYOO_VSYNC_MODE now, not
+     * the incoming SDL renderer vsync flag. */
+    const MMIYOO_VSyncMode_e vsync_mode = MMIYOO_GetVSyncMode();
+    (void)wait_for_vsync;
 
     if (!gfx.double_buffer_enabled || gfx.back.phyAddr == 0 || gfx.fb.phyAddr == 0) {
         return;
     }
 
-    if (wait_for_vsync && gfx.fb_dev > 0) {
+    if (vsync_mode != MMIYOO_VSYNC_MODE_OFF && gfx.fb_dev > 0 && !gfx.page_flip_enabled) {
         static SDL_bool vsync_unsupported_warned = SDL_FALSE;
         static Uint64 last_present_ticks = 0;
         const Uint64 target_interval_ms = 17; /* one frame @ 60Hz */
         const Uint64 now = SDL_GetTicks64();
-        const SDL_bool already_late = MMIYOO_IsVSyncAdaptive()
+        const SDL_bool already_late = (vsync_mode == MMIYOO_VSYNC_MODE_ADAPTIVE)
             && last_present_ticks != 0
             && (now - last_present_ticks) >= target_interval_ms;
 
@@ -868,6 +922,30 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
         }
 
         last_present_ticks = SDL_GetTicks64();
+    }
+
+    if (gfx.page_flip_enabled) {
+        /* Real flip: pan the CRTC to the half we just rendered, no copy.
+         * page_flip_index tracks which half is the front (scanned-out) one;
+         * flip it, pan to it, then point gfx.back at the now-hidden half. */
+        frame_bytes = gfx.back.length;
+        if (gfx.back.virAddr) {
+            MI_SYS_FlushInvCache(gfx.back.virAddr, frame_bytes);
+        }
+
+        gfx.page_flip_index ^= 1;
+        gfx.vinfo.yoffset = gfx.page_flip_index ? gfx.vinfo.yres : 0;
+        /* /dev/l in the Miyoo firmware controls double buffering and MI_DISP
+         * interaction. It can pan for you, but when /dev/l handles it,
+         * you're forced into "strict mode" vsync, where you get 60fps but
+         * whenever load is too high, you're instantly forced to 30fps. You
+         * can kill /dev/l to control this behaviour, but it will introduce
+         * flickering. */
+        ioctl(gfx.fb_dev, FBIOPAN_DISPLAY, &gfx.vinfo);
+
+        gfx.back.phyAddr = gfx.fb.phyAddr + (gfx.page_flip_index ? 0 : frame_bytes);
+        gfx.back.virAddr = (Uint8 *)gfx.fb.virAddr + (gfx.page_flip_index ? 0 : frame_bytes);
+        return;
     }
 
     copy_bytes = gfx.back.length;

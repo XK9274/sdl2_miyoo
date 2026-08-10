@@ -106,6 +106,10 @@ typedef struct _GFX {
     SDL_cond *action_cond;
 
     SDL_bool double_buffer_enabled;
+
+    /* Present strategy: real FBIOPAN_DISPLAY flip vs the fenced BitBlit copy. */
+    SDL_bool page_flip_enabled;
+    int page_flip_index;
 } GFX;
 
 void GFX_Clear(void);
@@ -136,6 +140,7 @@ MI_U32 GFX_GetFrameStride(void);
 MI_U32 GFX_GetFrameWidth(void);
 MI_U32 GFX_GetFrameHeight(void);
 SDL_bool GFX_IsDoubleBuffered(void);
+SDL_bool GFX_IsPageFlipEnabled(void);
 void GFX_SwapBuffers(SDL_bool wait_for_vsync);
 void *GFX_GetFrameBufferVirtual(void);
 
