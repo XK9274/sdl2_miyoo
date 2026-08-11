@@ -30,6 +30,10 @@
 struct haptic_hwdata {
     SDL_TimerID timer;
     SDL_bool playing;
+    SDL_bool paused;
+    SDL_bool enabled;      /* on/off state to restore on resume */
+    Uint32 start_ticks;    /* SDL_GetTicks() when timer was armed, 0 = no timer */
+    Uint32 length_ms;      /* remaining/full duration; 0 = infinite or no timer */
 };
 
 struct haptic_hweffect {
@@ -217,7 +221,12 @@ SDL_SYS_HapticRunEffect(SDL_Haptic *haptic, struct haptic_effect *effect, Uint32
     }
 
     haptic->hwdata->playing = enabled;
+    haptic->hwdata->paused = SDL_FALSE;
+    haptic->hwdata->enabled = enabled;
+    haptic->hwdata->length_ms = (length != SDL_HAPTIC_INFINITY) ? length : 0;
+    haptic->hwdata->start_ticks = 0;
     if (enabled && length > 0 && length != SDL_HAPTIC_INFINITY) {
+        haptic->hwdata->start_ticks = SDL_GetTicks();
         haptic->hwdata->timer = SDL_AddTimer(length, MMIYOO_HapticTimer, haptic);
     }
 
@@ -235,6 +244,7 @@ SDL_SYS_HapticStopEffect(SDL_Haptic *haptic, struct haptic_effect *effect)
     }
     if (haptic && haptic->hwdata) {
         haptic->hwdata->playing = SDL_FALSE;
+        haptic->hwdata->paused = SDL_FALSE;
     }
 
     return MMIYOO_SetRumble(SDL_FALSE);
@@ -256,7 +266,7 @@ SDL_SYS_HapticGetEffectStatus(SDL_Haptic *haptic, struct haptic_effect *effect)
 {
     (void)effect;
 
-    return (haptic && haptic->hwdata && haptic->hwdata->playing) ? 1 : 0;
+    return (haptic && haptic->hwdata && haptic->hwdata->playing && !haptic->hwdata->paused) ? 1 : 0;
 }
 
 int
@@ -280,17 +290,40 @@ SDL_SYS_HapticSetAutocenter(SDL_Haptic *haptic, int autocenter)
 int
 SDL_SYS_HapticPause(SDL_Haptic *haptic)
 {
-    (void)haptic;
+    if (!haptic || !haptic->hwdata || !haptic->hwdata->playing || haptic->hwdata->paused) {
+        return 0;
+    }
 
+    if (haptic->hwdata->timer) {
+        Uint32 elapsed;
+
+        SDL_RemoveTimer(haptic->hwdata->timer);
+        haptic->hwdata->timer = 0;
+
+        elapsed = SDL_GetTicks() - haptic->hwdata->start_ticks;
+        haptic->hwdata->length_ms = (elapsed < haptic->hwdata->length_ms)
+            ? (haptic->hwdata->length_ms - elapsed) : 0;
+    }
+
+    haptic->hwdata->paused = SDL_TRUE;
     return MMIYOO_SetRumble(SDL_FALSE);
 }
 
 int
 SDL_SYS_HapticUnpause(SDL_Haptic *haptic)
 {
-    (void)haptic;
+    if (!haptic || !haptic->hwdata || !haptic->hwdata->paused) {
+        return 0;
+    }
 
-    return 0;
+    haptic->hwdata->paused = SDL_FALSE;
+
+    if (haptic->hwdata->enabled && haptic->hwdata->length_ms > 0) {
+        haptic->hwdata->start_ticks = SDL_GetTicks();
+        haptic->hwdata->timer = SDL_AddTimer(haptic->hwdata->length_ms, MMIYOO_HapticTimer, haptic);
+    }
+
+    return MMIYOO_SetRumble(haptic->hwdata->enabled);
 }
 
 int
