@@ -6,7 +6,7 @@ In some cases these may be dead code. XK
 
 
 - `SDL_MMIYOO_INPUT_MODE` -- `"keyboard"` / `"joystick"` (unset = joystick), live-switchable
-- `SDL_MMIYOO_VSYNC_MODE` -- `"off"` (default, temporary decision - see comment on `SDL_HINT_MMIYOO_VSYNC_MODE` in `SDL_mmiyoo.h`) / `"adaptive"` / `"strict"` (real `/dev/l`-paced panning, launch-time only)
+- `SDL_MMIYOO_VSYNC_MODE` -- `"off"` (default, temporary decision - see comment on `SDL_HINT_MMIYOO_VSYNC_MODE` in `SDL_mmiyoo.h`) / `"adaptive"` / `"strict"` (real `/dev/l`-paced panning, launch-time only). Wins outright if set; if unset, the standard `SDL_RENDERER_PRESENTVSYNC`/`SDL_RenderSetVSync()` request decides adaptive-vs-off instead. Verified (not just requested) state is queryable via `SDL_GetRendererInfo()` -- `SDL_RENDERER_PRESENTVSYNC` is only set when presentation is genuinely vsync-paced.
 - `SDL_MMIYOO_DEBUG` / `SDL_MMIYOO_DEBUG_VERBOSE` -- raise driver log verbosity
 - `SDL_MMIYOO_GEOMETRY_STATS` -- log per-present triangle/span stats
 - `SDL_MMIYOO_GEOMETRY_BAND_HEIGHT` -- triangle rasterizer span band height (1-32, default 3)

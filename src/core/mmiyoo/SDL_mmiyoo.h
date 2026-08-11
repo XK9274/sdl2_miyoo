@@ -115,6 +115,15 @@ typedef enum {
 
 extern MMIYOO_VSyncMode_e MMIYOO_GetVSyncMode(void);
 
+/* Like MMIYOO_GetVSyncMode(), but for present-time callers that have a live
+ * SDL_Renderer vsync request to fall back on. If SDL_MMIYOO_VSYNC_MODE is
+ * explicitly set to a recognized value, it wins outright (matches
+ * MMIYOO_GetVSyncMode() and existing A/B testing tooling). If unset, honors
+ * the standard SDL_RENDERER_PRESENTVSYNC / SDL_RenderSetVSync() request
+ * instead of forcing off -- mirrors SDL_HINT_RENDER_VSYNC's own
+ * hint-overrides-flag precedence in SDL_render.c. */
+extern MMIYOO_VSyncMode_e MMIYOO_ResolvePresentVSyncMode(SDL_bool renderer_vsync_requested);
+
 #endif /* SDL_mmiyoo_h_ */
 
 /* vi: set ts=4 sw=4 expandtab: */

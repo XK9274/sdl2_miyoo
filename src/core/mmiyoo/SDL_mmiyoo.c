@@ -320,6 +320,16 @@ MMIYOO_GetVSyncMode(void)
     return MMIYOO_VSYNC_MODE_OFF;
 }
 
+MMIYOO_VSyncMode_e
+MMIYOO_ResolvePresentVSyncMode(SDL_bool renderer_vsync_requested)
+{
+    const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_MODE);
+    if (mode && *mode) {
+        return MMIYOO_GetVSyncMode();
+    }
+    return renderer_vsync_requested ? MMIYOO_VSYNC_MODE_ADAPTIVE : MMIYOO_VSYNC_MODE_OFF;
+}
+
 void
 MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info)
 {

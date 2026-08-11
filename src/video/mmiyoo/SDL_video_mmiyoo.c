@@ -894,10 +894,9 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 #ifdef MMIYOO
     MI_U32 copy_bytes;
     MI_U32 frame_bytes;
-    /* Present pacing is fully driven by SDL_HINT_MMIYOO_VSYNC_MODE now, not
-     * the incoming SDL renderer vsync flag. */
-    const MMIYOO_VSyncMode_e vsync_mode = MMIYOO_GetVSyncMode();
-    (void)wait_for_vsync;
+    /* SDL_MMIYOO_VSYNC_MODE wins if explicitly set; otherwise the standard
+     * SDL renderer vsync request (wait_for_vsync) decides adaptive vs off. */
+    const MMIYOO_VSyncMode_e vsync_mode = MMIYOO_ResolvePresentVSyncMode(wait_for_vsync);
 
     if (!gfx.double_buffer_enabled || gfx.back.phyAddr == 0 || gfx.fb.phyAddr == 0) {
         return;

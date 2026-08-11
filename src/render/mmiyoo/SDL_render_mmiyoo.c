@@ -2265,6 +2265,29 @@ static int MMIYOO_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect *rect,
     return SDL_Unsupported();
 }
 
+static SDL_bool
+mmiyoo_present_vsync_active(SDL_bool renderer_vsync_requested)
+{
+    const MMIYOO_VSyncMode_e mode = MMIYOO_ResolvePresentVSyncMode(renderer_vsync_requested);
+    if (mode == MMIYOO_VSYNC_MODE_OFF) {
+        return SDL_FALSE;
+    }
+    if (mode == MMIYOO_VSYNC_MODE_STRICT) {
+        return GFX_IsPageFlipEnabled();
+    }
+    return SDL_TRUE; /* adaptive: FBIO_WAITFORVSYNC genuinely executes each present */
+}
+
+static void
+mmiyoo_update_present_vsync_flag(SDL_Renderer *renderer, SDL_bool renderer_vsync_requested)
+{
+    if (mmiyoo_present_vsync_active(renderer_vsync_requested)) {
+        renderer->info.flags |= SDL_RENDERER_PRESENTVSYNC;
+    } else {
+        renderer->info.flags &= ~SDL_RENDERER_PRESENTVSYNC;
+    }
+}
+
 static void MMIYOO_RenderPresent(SDL_Renderer *renderer)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
@@ -2283,6 +2306,7 @@ static void MMIYOO_RenderPresent(SDL_Renderer *renderer)
 
     if (!data->is_target_texture || data->texture_blitted_to_screen) {
         GFX_SwapBuffers(data->vsync);
+        mmiyoo_update_present_vsync_flag(renderer, data->vsync);
         if (!was_target_texture) {
             data->current_target_surface.phyAddr = GFX_GetFrameBuffer();
             data->current_target_surface.u32Stride = GFX_GetFrameStride();
@@ -2373,6 +2397,7 @@ static int MMIYOO_SetVSync(SDL_Renderer *renderer, const int vsync)
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
 
     data->vsync = (vsync != 0) ? SDL_TRUE : SDL_FALSE;
+    mmiyoo_update_present_vsync_flag(renderer, data->vsync);
     return 0;
 }
 
@@ -2528,6 +2553,7 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
     else {
         data->vsync = SDL_FALSE;
     }
+    mmiyoo_update_present_vsync_flag(renderer, data->vsync);
 
     pixelformat = SDL_GetWindowPixelFormat(window);
     switch(pixelformat) {
