@@ -144,7 +144,6 @@ static void MMIYOO_ProcessDrawLines(SDL_Renderer *renderer, MMIYOO_RenderData *d
 static void MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SDL_RenderCommand *cmd, void *vertices);
 
 extern GFX gfx;
-extern MMIYOO_EventInfo MMiyooEventInfo;
 extern SDL_Surface *fps_info;
 extern int show_fps;
 extern int down_scale;
@@ -1713,11 +1712,6 @@ int My_QueueCopy(SDL_Renderer *renderer,
     if ((pitch <= 0) || (pixels == NULL)) {
         MMIYOO_LOG_WARN("QueueCopy: invalid pitch=%d or pixels=%p", pitch, pixels);
         return 0;
-    }
-
-    MMIYOO_SetMouseBounds(dst.x, dst.y, dst.x + dst.w, dst.y + dst.h);
-    if (0 && (MMiyooEventInfo.mode == MMIYOO_MOUSE_MODE)) {
-        draw_pen(pixels, src.w, pitch);
     }
 
     base_rotation = data->is_target_texture ? E_MI_GFX_ROTATE_0 : E_MI_GFX_ROTATE_180;

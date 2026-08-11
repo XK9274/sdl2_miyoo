@@ -50,31 +50,10 @@
 #define MYKEY_VOLUP         MMIYOO_BUTTON_VOLUP
 #define MYKEY_VOLDOWN       MMIYOO_BUTTON_VOLDOWN
 
-#define MYKEY_LAST_BITS     18 // ignore POWER, VOL-, VOL+ keys
-
-#define MMIYOO_KEYPAD_MODE 0
-#define MMIYOO_MOUSE_MODE  1
-
-typedef struct _MMIYOO_EventInfo {
-    struct _keypad{
-        uint32_t bitmaps;
-    } keypad;
-
-    struct _mouse{
-        int x;
-        int y;
-        int minx;
-        int miny;
-        int maxx;
-        int maxy;
-    } mouse;
-
-    int mode;
-} MMIYOO_EventInfo;
+#define MYKEY_LAST_BITS     14 // keyboard-emulation mode covers UP..MENU only; QSAVE/QLOAD/FF/EXIT/POWER/VOL-/VOL+ are joystick-mode-only (see code[] in SDL_event_mmiyoo.c)
 
 extern void MMIYOO_EventInit(void);
 extern void MMIYOO_EventDeinit(void);
 extern void MMIYOO_PumpEvents(_THIS);
-extern void MMIYOO_SetMouseBounds(int minx, int miny, int maxx, int maxy);
 
 #endif
