@@ -49,7 +49,9 @@ SDL_GetPowerInfo_MMIYOO(SDL_PowerState *state, int *seconds, int *percent)
     if (have_percent) {
         if (battery_percent >= 0 && battery_percent <= 100) {
             *percent = battery_percent;
-        } else if (battery_percent == 500) {
+        } else if (battery_percent == 500 && !have_charging) {
+            /* ADC sentinel is only a fallback -- never override a real
+             * GPIO-based charging read that already succeeded. */
             charging = SDL_TRUE;
             have_charging = SDL_TRUE;
         }
