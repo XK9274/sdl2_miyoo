@@ -310,13 +310,14 @@ MMIYOO_VSyncMode_e
 MMIYOO_GetVSyncMode(void)
 {
     const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_MODE);
-    if (mode && SDL_strcmp(mode, "off") == 0) {
-        return MMIYOO_VSYNC_MODE_OFF;
+    if (mode && SDL_strcmp(mode, "adaptive") == 0) {
+        return MMIYOO_VSYNC_MODE_ADAPTIVE;
     }
     if (mode && SDL_strcmp(mode, "strict") == 0) {
         return MMIYOO_VSYNC_MODE_STRICT;
     }
-    return MMIYOO_VSYNC_MODE_ADAPTIVE;
+    /* Default is "off" - see SDL_HINT_MMIYOO_VSYNC_MODE comment in SDL_mmiyoo.h. */
+    return MMIYOO_VSYNC_MODE_OFF;
 }
 
 void
