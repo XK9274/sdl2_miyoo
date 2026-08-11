@@ -89,22 +89,6 @@ typedef struct _GFX {
         MI_GFX_Opt_t opt;
     } hw;
 
-    int action;
-    struct _THREAD {
-        void *pixels;
-        SDL_Rect srt;
-        SDL_FRect drt;
-        SDL_Texture *texture;
-        SDL_Renderer *renderer;
-        MI_PHY phy_addr;
-        size_t size;
-    } thread;
-    
-    // SDL threading synchronization
-    SDL_Thread *video_thread;
-    SDL_mutex *action_mutex;
-    SDL_cond *action_cond;
-
     SDL_bool double_buffer_enabled;
 
     /* Present strategy: real FBIOPAN_DISPLAY flip vs the fenced BitBlit copy. */
@@ -147,7 +131,6 @@ void *GFX_GetFrameBufferVirtual(void);
 int FB_Init(void);
 int FB_Uninit(void);
 
-int draw_pen(const void *pixels, int width, int pitch);
 int My_QueueCopy(SDL_Renderer *renderer,
                  SDL_Texture *texture,
                  const void *pixels,

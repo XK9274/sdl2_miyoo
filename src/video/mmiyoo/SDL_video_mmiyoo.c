@@ -78,9 +78,6 @@ static int g_framebuffer_size = 0;
 static int g_tmp_buffer_size = 0;
 static Uint32 g_framebuffer_format = SDL_PIXELFORMAT_ARGB8888;
 
-#define GFX_ACTION_NONE 0
-#define GFX_ACTION_FLIP 1
-
 static void
 MMIYOO_UpdateFramebufferMetrics(void)
 {
@@ -104,7 +101,6 @@ MMIYOO_UpdateFramebufferMetrics(void)
 static MI_U16 global_texture_fences[MAX_GLOBAL_FENCES];
 static int global_fence_count = 0;
 
-static int is_running = 0;
 static SDL_Surface *cvt = NULL;
 static SDL_SpinLock g_mmiyoo_sys_lock = 0;
 static int g_mmiyoo_sys_refcount = 0;
@@ -142,8 +138,6 @@ void GFX_AddTextureFence(MI_U16 fence)
 #endif
 }
 
-extern MMIYOO_EventInfo MMiyooEventInfo;
-
 static int MMIYOO_VideoInit(_THIS);
 static int MMIYOO_SetDisplayMode(_THIS, SDL_VideoDisplay *display, SDL_DisplayMode *mode);
 static void MMIYOO_VideoQuit(_THIS);
@@ -152,67 +146,23 @@ static void crash_handler(int sig) {
     void *array[10];
     size_t size;
     char **strings;
+    size_t i;
 
     size = backtrace(array, 10);
     strings = backtrace_symbols(array, size);
 
     if (strings != NULL) {
+        /* Async-signal-safe: raw write(), not SDL_Log/fprintf. */
+        for (i = 0; i < size; i++) {
+            write(STDERR_FILENO, strings[i], strlen(strings[i]));
+            write(STDERR_FILENO, "\n", 1);
+        }
         free(strings);
     }
 
     // Reset signal to default and re-raise to get core dump
     signal(sig, SIG_DFL);
     raise(sig);
-}
-
-static int video_handler(void *data)
-{
-    while (is_running) {
-        SDL_LockMutex(gfx.action_mutex);
-        
-        // Wait for action signal instead of polling
-        while (gfx.action == GFX_ACTION_NONE && is_running) {
-            SDL_CondWait(gfx.action_cond, gfx.action_mutex);
-        }
-        
-        if (gfx.action == GFX_ACTION_FLIP) {
-            gfx.action = GFX_ACTION_NONE;
-            SDL_UnlockMutex(gfx.action_mutex);
-
-#ifdef MMIYOO
-            if (gfx.thread.renderer && gfx.thread.texture) {
-                SDL_Renderer *fb_renderer = gfx.thread.renderer;
-
-                if (SDL_SetRenderTarget(fb_renderer, NULL) < 0) {
-                    SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
-                                "[MMIYOO] video_handler: SDL_SetRenderTarget(NULL) failed: %s",
-                                SDL_GetError());
-                } else {
-                    SDL_FPoint default_center;
-
-                    default_center.x = gfx.thread.drt.w * 0.5f;
-                    default_center.y = gfx.thread.drt.h * 0.5f;
-
-                    My_QueueCopy(fb_renderer,
-                                 gfx.thread.texture,
-                                 NULL,
-                                 &gfx.thread.srt,
-                                 &gfx.thread.drt,
-                                 SDL_BLENDMODE_NONE,
-                                 E_MI_GFX_ROTATE_0,
-                                 SDL_FLIP_NONE,
-                                 default_center,
-                                 255, 255, 255, 255);
-
-                    SDL_RenderPresent(fb_renderer);
-                }
-            }
-#endif
-        } else {
-            SDL_UnlockMutex(gfx.action_mutex);
-        }
-    }
-    return 0;
 }
 
 #ifdef MMIYOO
@@ -418,94 +368,18 @@ void GFX_Init(void)
                      "GFX_Init: FB_Init failed");
         return;
     }
-    
-    // Initialize SDL synchronization primitives
-    gfx.action_mutex = SDL_CreateMutex();
-    gfx.action_cond = SDL_CreateCond();
-    if (!gfx.action_mutex || !gfx.action_cond) {
-        return;
-    }
-    
-    SDL_zero(gfx.thread);
-    {
-        MI_PHY phy_addr;
-        if (MI_SYS_MMA_Alloc(NULL, g_tmp_buffer_size, &phy_addr) == MI_SUCCESS) {
-            if (MI_SYS_Mmap(phy_addr, g_tmp_buffer_size, &gfx.thread.pixels, TRUE) == MI_SUCCESS) {
-                gfx.thread.phy_addr = phy_addr;
-                gfx.thread.size = g_tmp_buffer_size;
-            } else {
-                MI_SYS_MMA_Free(phy_addr);
-            }
-        }
-        if (!gfx.thread.pixels) {
-            gfx.thread.pixels = SDL_malloc(g_tmp_buffer_size);
-            gfx.thread.phy_addr = 0;
-            gfx.thread.size = g_tmp_buffer_size;
-        }
-        if (!gfx.thread.pixels) {
-            SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "GFX_Init: failed to allocate staging pixels buffer");
-            return;
-        }
-    }
 
     cvt = SDL_CreateRGBSurface(SDL_SWSURFACE,
                                g_framebuffer_width > 0 ? g_framebuffer_width : MMIYOO_DEFAULT_FRAMEBUFFER_WIDTH,
                                g_framebuffer_height > 0 ? g_framebuffer_height : MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT,
                                32, 0, 0, 0, 0);
-
-    is_running = 1;
-    gfx.action = GFX_ACTION_NONE;
-    
-    // Create SDL thread instead of pthread
-    gfx.video_thread = SDL_CreateThread(video_handler, "MMIYOOVideoThread", NULL);
-    if (!gfx.video_thread) {
-        return;
-    }
 }
 
 void GFX_Quit(void)
 {
-    is_running = 0;
-    
-    // Signal the thread to wake up and exit
-    if (gfx.action_mutex && gfx.action_cond) {
-        SDL_LockMutex(gfx.action_mutex);
-        SDL_CondSignal(gfx.action_cond);
-        SDL_UnlockMutex(gfx.action_mutex);
-    }
-    
-    // Wait for thread to complete
-    if (gfx.video_thread) {
-        SDL_WaitThread(gfx.video_thread, NULL);
-        gfx.video_thread = NULL;
-    }
-    
     FB_Clear();
 
     FB_Uninit();
-    
-    // Properly cleanup MI_SYS allocated memory
-    if (gfx.thread.pixels) {
-        if (gfx.thread.phy_addr != 0) {
-            MI_SYS_Munmap(gfx.thread.pixels, gfx.thread.size);
-            MI_SYS_MMA_Free(gfx.thread.phy_addr);
-        } else {
-            SDL_free(gfx.thread.pixels);
-        }
-        gfx.thread.pixels = NULL;
-        gfx.thread.phy_addr = 0;
-        gfx.thread.size = 0;
-    }
-    
-    // Cleanup SDL synchronization primitives
-    if (gfx.action_cond) {
-        SDL_DestroyCond(gfx.action_cond);
-        gfx.action_cond = NULL;
-    }
-    if (gfx.action_mutex) {
-        SDL_DestroyMutex(gfx.action_mutex);
-        gfx.action_mutex = NULL;
-    }
 
     // Single buffer mode - no yoffset to reset
     close(gfx.fb_dev);
