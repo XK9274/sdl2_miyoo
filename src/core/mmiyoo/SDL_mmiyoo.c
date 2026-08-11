@@ -260,7 +260,10 @@ MMIYOO_InputInit(void)
 void
 MMIYOO_InputDeinit(void)
 {
-    if (SDL_AtomicDecRef(&s_input_ref_count)) {
+    /* SDL_AtomicDecRef only returns true once the count truly reaches zero --
+     * skip teardown while another owner (joystick or event backend) still
+     * holds a reference. */
+    if (!SDL_AtomicDecRef(&s_input_ref_count)) {
         return;
     }
 
