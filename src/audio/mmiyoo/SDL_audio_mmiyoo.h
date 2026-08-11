@@ -37,9 +37,6 @@
 #define _THIS   SDL_AudioDevice *this
 
 struct SDL_PrivateAudioData {
-    /* The file descriptor for the audio device */
-    int audio_fd;
-
     /* Raw mixing buffer */
     Uint8 *mixbuf;
     Uint32 mixlen;
@@ -49,6 +46,5 @@ struct SDL_PrivateAudioData {
 #endif
     SDL_bool ao_active;
 };
-#define FUDGE_TICKS 10      /* The scheduler overhead ticks per frame */
 
 #endif
