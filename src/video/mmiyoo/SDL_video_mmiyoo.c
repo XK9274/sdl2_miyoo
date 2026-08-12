@@ -915,6 +915,14 @@ static int MMIYOO_Available(void)
     if((envr) && (SDL_strcmp(envr, MMIYOO_DRIVER_NAME) == 0)) {
         return 1;
     }
+
+    /* Auto-detect path (SDL_VIDEODRIVER unset). MMIYOO_ProbeHardware() is
+     * currently a stub returning SDL_FALSE until real probe specifics are
+     * confirmed -- see MMIYOO_ProbeHardware() in core/mmiyoo/SDL_mmiyoo.c. */
+    if (MMIYOO_ProbeHardware()) {
+        return 1;
+    }
+
     return 0;
 }
 

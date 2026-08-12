@@ -30,6 +30,13 @@ typedef enum {
     MMIYOO_MODEL_PLUS = 354
 } MMIYOO_DeviceModel;
 
+/* Custom firmware identity. Detection body is not yet implemented -- pending
+ * confirmed marker paths/strings per CFW. MMIYOO_GetCFW() returns
+ * MMIYOO_CFW_UNKNOWN unconditionally until then. */
+typedef enum {
+    MMIYOO_CFW_UNKNOWN = 0
+} MMIYOO_CFW;
+
 typedef enum {
     MMIYOO_BUTTON_UP = 0,
     MMIYOO_BUTTON_DOWN,
@@ -75,7 +82,13 @@ extern int MMIYOO_WriteSysfs(const char *path, const char *value, size_t length)
 extern SDL_bool MMIYOO_ReadIntFile(const char *path, int *value);
 
 extern MMIYOO_DeviceModel MMIYOO_GetDeviceModel(void);
+extern MMIYOO_CFW MMIYOO_GetCFW(void);
 extern Uint32 MMIYOO_KeycodeToButtonMask(int code);
+
+/* Real hardware probe for backend auto-detection (SDL_VIDEODRIVER unset).
+ * Checks for /dev/mi_sys (Sigmastar board) and /customer/app/MainUI (Miyoo
+ * firmware, any CFW) via existence checks only. */
+extern SDL_bool MMIYOO_ProbeHardware(void);
 
 extern void MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info);
 extern SDL_bool MMIYOO_GetFramebufferInfoFromFD(int fb_fd, MMIYOO_FramebufferInfo *info);

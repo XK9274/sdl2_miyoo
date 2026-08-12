@@ -16,7 +16,8 @@ In some cases these may be dead code. XK
 
 Sysfs write helper: `MMIYOO_WriteSysfs`
 Integer file read helper: `MMIYOO_ReadIntFile`
-Device model detection: `MMIYOO_GetDeviceModel`
+Device model detection (parses `fw_printenv SdUpgradeImage`, works under any CFW): `MMIYOO_GetDeviceModel`
+CFW (custom firmware) brand detection (stub, returns `MMIYOO_CFW_UNKNOWN` pending marker specifics): `MMIYOO_GetCFW`
 Keycode to button-bitmask mapping: `MMIYOO_KeycodeToButtonMask`
 Default framebuffer info: `MMIYOO_GetDefaultFramebufferInfo`
 Framebuffer info from an open fd: `MMIYOO_GetFramebufferInfoFromFD`
@@ -37,7 +38,8 @@ Keyboard/joystick mode getters: `MMIYOO_IsKeyboardModeActive`, `MMIYOO_IsJoystic
 VSync mode getter: `MMIYOO_GetVSyncMode`
 Window focus restore: `MMIYOO_RaiseWindow`
 Mouse bounds setter: `MMIYOO_SetMouseBounds`
-Video driver availability check: `MMIYOO_Available`
+Video driver availability check (explicit `SDL_VIDEODRIVER=mmiyoo` override, then falls back to `MMIYOO_ProbeHardware`): `MMIYOO_Available`
+Real hardware probe for auto-detection (checks `/dev/mi_sys` and `/customer/app/MainUI` exist): `MMIYOO_ProbeHardware`
 Framebuffer clear: `FB_Clear`
 Framebuffer init/teardown: `FB_Init`, `FB_Uninit`
 Present (copy or real page-flip depending on vsync mode): `GFX_SwapBuffers`

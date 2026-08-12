@@ -119,9 +119,24 @@ MMIYOO_ReadIntFile(const char *path, int *value)
 MMIYOO_DeviceModel
 MMIYOO_GetDeviceModel(void)
 {
+    char buffer[64];
+    FILE *fp;
     int model = 0;
 
-    if (!MMIYOO_ReadIntFile("/tmp/deviceModel", &model)) {
+    /* SdUpgradeImage lives in the bootloader env partition, so it reads the
+     * same regardless of which CFW overlay is installed on top. */
+    fp = popen("/etc/fw_printenv SdUpgradeImage", "r");
+    if (!fp) {
+        return MMIYOO_MODEL_UNKNOWN;
+    }
+
+    if (!fgets(buffer, sizeof(buffer), fp)) {
+        pclose(fp);
+        return MMIYOO_MODEL_UNKNOWN;
+    }
+    pclose(fp);
+
+    if (SDL_sscanf(buffer, "SdUpgradeImage=miyoo%d_fw.img", &model) != 1) {
         return MMIYOO_MODEL_UNKNOWN;
     }
 
@@ -130,6 +145,31 @@ MMIYOO_GetDeviceModel(void)
     }
 
     return MMIYOO_MODEL_UNKNOWN;
+}
+
+MMIYOO_CFW
+MMIYOO_GetCFW(void)
+{
+    /* TODO: detect CFW identity once marker paths/strings are confirmed. */
+    return MMIYOO_CFW_UNKNOWN;
+}
+
+SDL_bool
+MMIYOO_ProbeHardware(void)
+{
+    /* /dev/mi_sys confirms a Sigmastar board; /customer/app/MainUI confirms
+     * it's specifically a Miyoo firmware image (any CFW). Existence checks
+     * only -- no open/ioctl, so this can't take over hardware or crash on a
+     * non-Miyoo box. */
+    if (access("/dev/mi_sys", F_OK) != 0) {
+        return SDL_FALSE;
+    }
+
+    if (access("/customer/app/MainUI", F_OK) != 0) {
+        return SDL_FALSE;
+    }
+
+    return SDL_TRUE;
 }
 
 Uint32
