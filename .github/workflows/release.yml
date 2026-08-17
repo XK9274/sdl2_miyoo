@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v2.0.22-miyoo1)"
-        required: true
+        description: "Release tag (e.g. v2.0.22-miyoo1). Leave blank to auto-bump the patch version of the latest release."
+        required: false
         type: string
 
 jobs:
@@ -29,8 +29,23 @@ jobs:
       - name: Resolve tag
         id: version
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
             TAG="${{ inputs.tag }}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+            if [[ -z "$LATEST_TAG" ]]; then
+              TAG="v0.1.0"
+              echo "No existing release tags found -- starting at $TAG"
+            else
+              VER="${LATEST_TAG#v}"
+              MAJOR="${VER%%.*}"
+              REST="${VER#*.}"
+              MINOR="${REST%%.*}"
+              PATCH="${REST#*.}"
+              PATCH="${PATCH%%-*}"
+              TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+              echo "No tag given -- auto-bumping latest release $LATEST_TAG -> $TAG"
+            fi
           else
             TAG="${GITHUB_REF_NAME}"
           fi
@@ -101,7 +116,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             autoconf automake libtool pkg-config \
-            make gcc g++ \
+            make gcc g++ patch \
             git wget
 
       - name: Install miyoomini toolchain
@@ -113,93 +128,37 @@ jobs:
             REPO=miyoomini-toolchain-buildroot
           fi
           wget -q "https://github.com/shauninman/$REPO/releases/download/v0.0.3/miyoomini-toolchain.tar.xz" -O /tmp/toolchain.tar.xz
+          sudo mkdir -p /opt
           sudo tar -xf /tmp/toolchain.tar.xz -C /opt
           rm /tmp/toolchain.tar.xz
 
-      - name: Build neon helper library
+      - name: Build via mk_miyoo.sh
         run: |
-          git clone --depth=1 https://github.com/XK9274/neon-arm-library-miyoo.git /tmp/neon-arm-library-miyoo
-          cd /tmp/neon-arm-library-miyoo
+          chmod +x build-scripts/mk_miyoo.sh
+          ./build-scripts/mk_miyoo.sh --jobs "$(nproc)"
 
-          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
-          CROSS="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-"
-          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
-
-          make CC="${CROSS}gcc" AR="${CROSS}ar"
-          cp -f libneonarmmiyoo.so "$GITHUB_WORKSPACE/"
-          cp -f libneonarmmiyoo.a  "$GITHUB_WORKSPACE/"
-
-      - name: Configure SDL2
+      - name: Verify artifact
         run: |
-          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
-          SDL_DIR="$GITHUB_WORKSPACE"
-
-          export CROSS="$TOOLCHAIN_ROOT/bin/arm-linux-gnueabihf-"
-          export CC="${CROSS}gcc"
-          export CXX="${CROSS}g++"
-          export AR="${CROSS}ar"
-          export AS="${CROSS}as"
-          export LD="${CROSS}ld"
-          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
-          export MOD=mmiyoo
-
-          cd "$SDL_DIR"
-          chmod -R a+wx . >/dev/null 2>&1 || true
-          ./autogen.sh
-
-          CPPFLAGS="-DMMIYOO -I${SDL_DIR}/include -I${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/include" \
-          CFLAGS="-O2" \
-          LDFLAGS="-s -L${SDL_DIR} -L${TOOLCHAIN_ROOT}/arm-linux-gnueabihf/libc/usr/lib" \
-          LIBS="-lmi_sys -lmi_gfx -lmi_ao -lcam_os_wrapper -ldl" \
-          ./configure \
-            --host=arm-linux-gnueabihf \
-            --disable-joystick-virtual \
-            --disable-power \
-            --disable-alsa \
-            --disable-diskaudio \
-            --disable-video-x11 \
-            --disable-video-wayland \
-            --disable-video-kmsdrm \
-            --disable-video-vulkan \
-            --disable-dbus \
-            --disable-ime \
-            --disable-fcitx \
-            --disable-hidapi \
-            --disable-pulseaudio \
-            --disable-sndio \
-            --disable-libudev \
-            --disable-jack \
-            --disable-video-opengl \
-            --disable-oss \
-            --disable-dummyaudio \
-            --disable-video-dummy \
-            --disable-debug \
-            --disable-video-opengles \
-            --disable-video-opengles2
-
-      - name: Build SDL2
-        run: |
-          TOOLCHAIN_ROOT=/opt/miyoomini-toolchain
-          export PATH="$TOOLCHAIN_ROOT/bin:$PATH"
-          cd "$GITHUB_WORKSPACE"
-          make -j$(nproc) V=99
-
-      - name: Extract artifact
-        run: |
-          LIB="${{ github.workspace }}/sdl2_miyoo/build/.libs/libSDL2-2.0.so.0.18.2"
+          LIB="${{ github.workspace }}/output/libSDL2-2.0.so.0"
           if [[ ! -f "$LIB" ]]; then
             echo "Build output not found at $LIB"
-            find "${{ github.workspace }}/sdl2_miyoo/build" -name "libSDL2*" 2>/dev/null || true
+            find "${{ github.workspace }}/build" -name "libSDL2*" 2>/dev/null || true
             exit 1
           fi
-          mkdir -p "${{ github.workspace }}/output"
-          cp "$LIB" "${{ github.workspace }}/output/libSDL2-2.0.so.0"
+
+      - name: Generate checksum
+        run: |
+          cd "${{ github.workspace }}/output"
+          sha256sum libSDL2-2.0.so.0 > libSDL2-2.0.so.0.sha256
+          cat libSDL2-2.0.so.0.sha256
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: libSDL2-miyoo-${{ needs.preflight.outputs.tag }}
-          path: output/libSDL2-2.0.so.0
+          path: |
+            output/libSDL2-2.0.so.0
+            output/libSDL2-2.0.so.0.sha256
           if-no-files-found: error
 
   release:
@@ -228,16 +187,18 @@ jobs:
 
           gh release create "$TAG" \
             output/libSDL2-2.0.so.0 \
+            output/libSDL2-2.0.so.0.sha256 \
             --title "SDL2 Miyoo Mini $TAG" \
             --notes "$(cat <<NOTES
           ## SDL2 for Miyoo Mini — $TAG
 
           Cross-compiled for \`arm-linux-gnueabihf\` using the miyoomini-toolchain.
 
-          ### Artifact
+          ### Artifacts
           | File | Description |
           |------|-------------|
           | \`libSDL2-2.0.so.0\` | Stripped release build |
+          | \`libSDL2-2.0.so.0.sha256\` | SHA-256 checksum |
 
           ### Build info
           - Commit: ${{ github.sha }}
