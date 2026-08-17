@@ -728,15 +728,6 @@ MI_U32 GFX_GetFrameHeight(void)
 #endif
 }
 
-SDL_bool GFX_IsDoubleBuffered(void)
-{
-#ifdef MMIYOO
-    return gfx.double_buffer_enabled;
-#else
-    return SDL_FALSE;
-#endif
-}
-
 SDL_bool GFX_IsPageFlipEnabled(void)
 {
 #ifdef MMIYOO

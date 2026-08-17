@@ -212,7 +212,10 @@ static int MMIYOO_OpenDevice(_THIS, void *handle, const char *devname, int iscap
     port.u32DevId = g_AoDevId;
     port.u32ChnId = g_AoChn;
     port.u32PortId = 0;
-    MI_SYS_SetChnOutputPortDepth(&port, 12, 13);
+    ret = MI_SYS_SetChnOutputPortDepth(&port, 12, 13);
+    if (ret != MI_SUCCESS) {
+        SDL_Log("MMIYOO: MI_SYS_SetChnOutputPortDepth failed (0x%x), using driver default depth", ret);
+    }
     MI_AO_ClearChnBuf(g_AoDevId, g_AoChn);
 
     this->hidden->ao_active = SDL_TRUE;
