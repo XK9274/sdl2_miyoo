@@ -50,6 +50,22 @@
 static MI_AO_CHN g_AoChn = 0;
 static MI_AUDIO_DEV g_AoDevId = 0;
 
+#define MMIYOO_AUDIO_DEFAULT_FREQ            44100
+#define MMIYOO_AUDIO_SAMPLE_ALIGN            128    /* MI_AO requires u32PtNumPerFrm aligned to this */
+#define MMIYOO_AUDIO_FRAME_COUNT             6      /* MI_AUDIO_Attr_t.u32FrmNum: internal AO frame buffer count */
+#define MMIYOO_AUDIO_PORT_DEPTH_MIN          12     /* MI_SYS_SetChnOutputPortDepth: min queued output frames */
+#define MMIYOO_AUDIO_PORT_DEPTH_MAX          13     /* MI_SYS_SetChnOutputPortDepth: max queued output frames */
+#define MMIYOO_AUDIO_WAIT_DELAY_MIN_MS       5      /* WaitDevice poll floor: avoid a tight QueryChnStat spin */
+#define MMIYOO_AUDIO_RETRY_DELAY_MS          1      /* PlayDevice retry spacing on MI_AO_ERR_NOBUF */
+/* MI_AO_SendFrame's s32MilliSec: -1 blocks until space is free (the pattern
+ * used by SigmaStar's own MI_AO_SendFrame example, incl. the NOBUF retry
+ * loop below), 0 is non-blocking, >0 is a bounded timeout in ms. */
+#define MMIYOO_AUDIO_SENDFRAME_BLOCK_FOREVER (-1)
+/* Safety net only, not expected to trigger in normal operation: caps the
+ * NOBUF retry loop so a stuck AO channel can't hang the audio thread
+ * forever if this->enabled never clears. */
+#define MMIYOO_AUDIO_SENDFRAME_MAX_RETRIES   5000
+
 static MI_AUDIO_SampleRate_e
 MMIYOO_SelectSampleRate(int *freq)
 {
@@ -72,7 +88,7 @@ MMIYOO_SelectSampleRate(int *freq)
 
     target = *freq;
     if (target <= 0) {
-        target = 44100;
+        target = MMIYOO_AUDIO_DEFAULT_FREQ;
     }
 
     best = 0;
@@ -132,10 +148,10 @@ static int MMIYOO_OpenDevice(_THIS, void *handle, const char *devname, int iscap
         this->spec.channels = 2;
     }
 
-    if (this->spec.samples < 128) {
-        this->spec.samples = 128;
+    if (this->spec.samples < MMIYOO_AUDIO_SAMPLE_ALIGN) {
+        this->spec.samples = MMIYOO_AUDIO_SAMPLE_ALIGN;
     }
-    this->spec.samples = (Uint16)((this->spec.samples + 127) & ~127);
+    this->spec.samples = (Uint16)((this->spec.samples + (MMIYOO_AUDIO_SAMPLE_ALIGN - 1)) & ~(MMIYOO_AUDIO_SAMPLE_ALIGN - 1));
 
 #if defined(MMIYOO)
     samplerate = MMIYOO_SelectSampleRate(&this->spec.freq);
@@ -172,7 +188,7 @@ static int MMIYOO_OpenDevice(_THIS, void *handle, const char *devname, int iscap
     attr.eBitwidth = E_MI_AUDIO_BIT_WIDTH_16;
     attr.eWorkmode = E_MI_AUDIO_MODE_I2S_MASTER;
     attr.eSoundmode = (this->spec.channels > 1) ? E_MI_AUDIO_SOUND_MODE_STEREO : E_MI_AUDIO_SOUND_MODE_MONO;
-    attr.u32FrmNum = 6;
+    attr.u32FrmNum = MMIYOO_AUDIO_FRAME_COUNT;
     attr.u32PtNumPerFrm = this->spec.samples;
     attr.u32CodecChnCnt = attr.eSoundmode == E_MI_AUDIO_SOUND_MODE_STEREO ? 2 : 1;
     attr.u32ChnCnt = (MI_U32)this->spec.channels;
@@ -180,31 +196,19 @@ static int MMIYOO_OpenDevice(_THIS, void *handle, const char *devname, int iscap
     ret = MI_AO_SetPubAttr(g_AoDevId, &attr);
     if (ret != MI_SUCCESS) {
         SDL_SetError("MMIYOO: MI_AO_SetPubAttr failed (0x%x)", ret);
-        SDL_free(this->hidden->mixbuf);
-        SDL_free(this->hidden);
-        this->hidden = NULL;
-        return -1;
+        goto fail_pubattr;
     }
 
     ret = MI_AO_Enable(g_AoDevId);
     if (ret != MI_SUCCESS) {
         SDL_SetError("MMIYOO: MI_AO_Enable failed (0x%x)", ret);
-        MI_AO_ClrPubAttr(g_AoDevId);
-        SDL_free(this->hidden->mixbuf);
-        SDL_free(this->hidden);
-        this->hidden = NULL;
-        return -1;
+        goto fail_enable;
     }
 
     ret = MI_AO_EnableChn(g_AoDevId, g_AoChn);
     if (ret != MI_SUCCESS) {
         SDL_SetError("MMIYOO: MI_AO_EnableChn failed (0x%x)", ret);
-        MI_AO_Disable(g_AoDevId);
-        MI_AO_ClrPubAttr(g_AoDevId);
-        SDL_free(this->hidden->mixbuf);
-        SDL_free(this->hidden);
-        this->hidden = NULL;
-        return -1;
+        goto fail_chn;
     }
 
     SDL_zero(port);
@@ -212,7 +216,7 @@ static int MMIYOO_OpenDevice(_THIS, void *handle, const char *devname, int iscap
     port.u32DevId = g_AoDevId;
     port.u32ChnId = g_AoChn;
     port.u32PortId = 0;
-    ret = MI_SYS_SetChnOutputPortDepth(&port, 12, 13);
+    ret = MI_SYS_SetChnOutputPortDepth(&port, MMIYOO_AUDIO_PORT_DEPTH_MIN, MMIYOO_AUDIO_PORT_DEPTH_MAX);
     if (ret != MI_SUCCESS) {
         SDL_Log("MMIYOO: MI_SYS_SetChnOutputPortDepth failed (0x%x), using driver default depth", ret);
     }
@@ -228,6 +232,18 @@ static int MMIYOO_OpenDevice(_THIS, void *handle, const char *devname, int iscap
 #endif
 
     return 0;
+
+#if defined(MMIYOO)
+fail_chn:
+    MI_AO_Disable(g_AoDevId);
+fail_enable:
+    MI_AO_ClrPubAttr(g_AoDevId);
+fail_pubattr:
+    SDL_free(this->hidden->mixbuf);
+    SDL_free(this->hidden);
+    this->hidden = NULL;
+    return -1;
+#endif
 }
 
 static void MMIYOO_WaitDevice(_THIS)
@@ -251,7 +267,7 @@ static void MMIYOO_WaitDevice(_THIS)
     while (SDL_AtomicGet(&this->enabled)) {
         ret = MI_AO_QueryChnStat(g_AoDevId, g_AoChn, &aoState);
         if (ret != MI_SUCCESS) {
-            SDL_Delay(5);
+            SDL_Delay(MMIYOO_AUDIO_WAIT_DELAY_MIN_MS);
             continue;
         }
 
@@ -260,21 +276,21 @@ static void MMIYOO_WaitDevice(_THIS)
         }
 
         if (bytes_per_second == 0) {
-            SDL_Delay(5);
+            SDL_Delay(MMIYOO_AUDIO_WAIT_DELAY_MIN_MS);
         } else {
             Uint32 deficit;
             Uint32 delay_ms;
 
             deficit = needed - aoState.u32ChnFreeNum;
             delay_ms = (deficit * 1000U) / bytes_per_second;
-            if (delay_ms < 5U) {
-                delay_ms = 5U;
+            if (delay_ms < MMIYOO_AUDIO_WAIT_DELAY_MIN_MS) {
+                delay_ms = MMIYOO_AUDIO_WAIT_DELAY_MIN_MS;
             }
             SDL_Delay(delay_ms);
         }
     }
 #else
-    SDL_Delay(5);
+    SDL_Delay(MMIYOO_AUDIO_WAIT_DELAY_MIN_MS);
 #endif
 }
 
@@ -283,6 +299,7 @@ static void MMIYOO_PlayDevice(_THIS)
 #if defined(MMIYOO)
     MI_AUDIO_Frame_t *frame;
     MI_S32 ret;
+    int retries;
 
     if (!this->hidden || !this->hidden->ao_active) {
         return;
@@ -293,12 +310,21 @@ static void MMIYOO_PlayDevice(_THIS)
     frame->apVirAddr[0] = this->hidden->mixbuf;
     frame->u32Seq++;
 
+    /* Retry-on-NOBUF matches SigmaStar's own MI_AO_SendFrame example (block
+     * forever, retry on NOBUF); MAX_RETRIES is only a safety net in case
+     * this->enabled never clears while the channel is stuck. */
+    retries = 0;
     do {
-        ret = MI_AO_SendFrame(g_AoDevId, g_AoChn, frame, -1);
+        ret = MI_AO_SendFrame(g_AoDevId, g_AoChn, frame, MMIYOO_AUDIO_SENDFRAME_BLOCK_FOREVER);
         if (ret == MI_AO_ERR_NOBUF) {
-            SDL_Delay(1);
+            SDL_Delay(MMIYOO_AUDIO_RETRY_DELAY_MS);
+            retries++;
         }
-    } while ((ret == MI_AO_ERR_NOBUF) && SDL_AtomicGet(&this->enabled));
+    } while ((ret == MI_AO_ERR_NOBUF) && SDL_AtomicGet(&this->enabled) && retries < MMIYOO_AUDIO_SENDFRAME_MAX_RETRIES);
+
+    if (ret == MI_AO_ERR_NOBUF) {
+        SDL_Log("MMIYOO: MI_AO_SendFrame stayed NOBUF after %d retries, dropping frame", retries);
+    }
 #else
     SDL_Delay(5);
 #endif
@@ -306,6 +332,9 @@ static void MMIYOO_PlayDevice(_THIS)
 
 static Uint8 *MMIYOO_GetDeviceBuf(_THIS)
 {
+    if (!this->hidden) {
+        return NULL;
+    }
     return (this->hidden->mixbuf);
 }
 
