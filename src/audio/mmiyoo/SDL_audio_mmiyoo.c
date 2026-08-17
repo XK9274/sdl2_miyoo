@@ -310,9 +310,6 @@ static void MMIYOO_PlayDevice(_THIS)
     frame->apVirAddr[0] = this->hidden->mixbuf;
     frame->u32Seq++;
 
-    /* Retry-on-NOBUF matches SigmaStar's own MI_AO_SendFrame example (block
-     * forever, retry on NOBUF); MAX_RETRIES is only a safety net in case
-     * this->enabled never clears while the channel is stuck. */
     retries = 0;
     do {
         ret = MI_AO_SendFrame(g_AoDevId, g_AoChn, frame, MMIYOO_AUDIO_SENDFRAME_BLOCK_FOREVER);

@@ -370,8 +370,6 @@ MMIYOO_SetupEdge(MMIYOO_Edge *edge, const SDL_FPoint *p0, const SDL_FPoint *p1)
     }
 }
 
-/* Legacy intersection helpers removed: optimized rasterizer no longer uses them. */
-
 // Optimized triangle filling using incremental edge walking
 static void
 MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
