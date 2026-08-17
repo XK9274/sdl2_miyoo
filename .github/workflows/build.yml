@@ -31,7 +31,7 @@ jobs:
           else
             REPO=miyoomini-toolchain-buildroot
           fi
-          # Thankyou https://github.com/shauninman for the toolchains you created for the community
+          # Toolchain provided by shauninman: https://github.com/shauninman
           wget -q "https://github.com/shauninman/$REPO/releases/download/v0.0.3/miyoomini-toolchain.tar.xz" -O /tmp/toolchain.tar.xz
           sudo mkdir -p /opt
           sudo tar -xf /tmp/toolchain.tar.xz -C /opt

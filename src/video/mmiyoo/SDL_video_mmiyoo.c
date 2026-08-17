@@ -543,16 +543,7 @@ int GFX_Copy(const void *pixels,
     /* Blend-factor mapping follows SigmaStar docs (see
      *   GFX - SigmaStarDocs copy.txt §3.9/3.10 for DfbBldOp_e and DfbBlendFlags_e
      * and SDL's composed modes in src/render/SDL_render.c). */
-    /* E_MI_GFX_DFB_BLEND_ALPHACHANNEL = "combine with source alpha value"
-     * (GFX - SigmaStarDocs.txt Sec 2.10) -- required whenever a blend
-     * factor below references SRCALPHA/INVSRCALPHA, or the hardware never
-     * actually reads the source's real per-pixel alpha channel and the
-     * SRCALPHA/INVSRCALPHA factors have no per-pixel data to work from.
-     * Without it, GL-rendered RGBA FBO textures and TTF text (whose
-     * "transparent" pixels are RGB(0,0,0) with alpha=0) paint their raw
-     * black RGB as fully opaque instead of being blended out -- the
-     * "black square" bug. NONE/MOD don't reference alpha factors, so they
-     * don't need it. */
+    /* ALPHACHANNEL flag is required whenever a blend factor below references SRCALPHA/INVSRCALPHA, or the hardware never reads real per-pixel alpha (GFX - SigmaStarDocs.txt Sec 2.10). */
     switch (blend_mode) {
         case SDL_BLENDMODE_NONE:
             gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
@@ -582,15 +573,7 @@ int GFX_Copy(const void *pixels,
             break;
     }
 
-    /* SDL_SetTextureColorMod/SDL_SetTextureAlphaMod: MI_GFX has no per-draw
-     * tint parameter of its own, but MI_GFX_Opt_t's DFB blend flags support
-     * exactly this -- E_MI_GFX_DFB_BLEND_COLORIZE multiplies the source
-     * pixel's RGB by u32GlobalSrcConstColor before the blend equation runs,
-     * and E_MI_GFX_DFB_BLEND_COLORALPHA does the same for alpha. Skip
-     * setting the flags entirely when there's nothing to modulate (the
-     * overwhelmingly common case) to avoid any hardware-behavior surprises
-     * on the default path. Color packed A8:R8:G8:B8 per the QuickFill
-     * u32ColorVal convention (GFX - SigmaStarDocs.txt Sec 1.4). */
+    /* COLORIZE/COLORALPHA tint the source via u32GlobalSrcConstColor (A8:R8:G8:B8); skip entirely when there's nothing to modulate. */
     if (mod_r != 255 || mod_g != 255 || mod_b != 255 || mod_a != 255) {
         MI_U32 flags = (MI_U32)gfx.hw.opt.eDFBBlendFlag;
         if (mod_r != 255 || mod_g != 255 || mod_b != 255) {
@@ -808,12 +791,7 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 
         gfx.page_flip_index ^= 1;
         gfx.vinfo.yoffset = gfx.page_flip_index ? gfx.vinfo.yres : 0;
-        /* /dev/l in the Miyoo firmware controls double buffering and MI_DISP
-         * interaction. It can pan for you, but when /dev/l handles it,
-         * you're forced into "strict mode" vsync, where you get 60fps but
-         * whenever load is too high, you're instantly forced to 30fps. You
-         * can kill /dev/l to control this behaviour, but it will introduce
-         * flickering. */
+        /* /dev/l handles panning in strict-mode vsync: 60fps normally, hard-steps to 30fps under load. Killing /dev/l regains control but introduces flickering. */
         ioctl(gfx.fb_dev, FBIOPAN_DISPLAY, &gfx.vinfo);
 
         gfx.back.phyAddr = gfx.fb.phyAddr + (gfx.page_flip_index ? 0 : frame_bytes);
@@ -836,13 +814,16 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
         MI_SYS_FlushInvCache(gfx.back.virAddr, copy_bytes);
     }
 
-    /* Not used for the present-copy: MI_SYS_MemcpyPa has no completion
-     * fence in the SDK and measured ~0.008ms here vs ~1.2-4ms for a fenced
-     * MI_GFX_BitBlit of the same frame -- too fast to be a finished ~1.2MB
-     * DMA transfer, so the next frame could start overwriting gfx.back
-     * before this copy out of it was actually done. Kept only as a
-     * reference; MI_SYS_MemcpyPa is still used elsewhere for other buffer
-     * ops where that's not a concern. */
+    /* Not used for the present-copy: MI_SYS_MemcpyPa has no completion fence,
+     * so the next frame could start overwriting gfx.back before the DMA
+     * actually finished (measured ~0.008ms return vs ~1.2-4ms real transfer
+     * time). A fixed/adaptive delay can't safely replace the fence here --
+     * the whole MI_SYS Memcpy/BufFillPa/BufBlitPa family exposes no
+     * completion signal to size or gate one on, so any delay is a guess:
+     * too short and the race just gets narrower, too long and it wastes
+     * frame budget every frame. MI_GFX_BitBlit's real fence waits exactly
+     * as long as needed either way. Kept only as a reference; MemcpyPa is
+     * still used elsewhere for buffer ops where that's not a concern. */
     /*
     if (MI_SYS_MemcpyPa(gfx.fb.phyAddr, gfx.back.phyAddr, copy_bytes) != MI_SUCCESS) {
         MMIYOO_LOG_WARN("GFX_SwapBuffers: MI_SYS_MemcpyPa failed (bytes=%u)", copy_bytes);
@@ -876,10 +857,7 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
         opt.eRotate = E_MI_GFX_ROTATE_0;
         opt.eMirror = E_MI_GFX_MIRROR_NONE;
         opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
-        /* Straight opaque copy: src*ONE + dst*ZERO. Leaving these at their
-         * memset zero value (E_MI_GFX_DFB_BLD_ZERO for both) computes
-         * src*0 + dst*0 = 0 for every pixel regardless of eDFBBlendFlag,
-         * i.e. a solid black frame -- this bit it before. */
+        /* Straight opaque copy: src*ONE + dst*ZERO. The memset zero default (ZERO/ZERO) instead computes a solid black frame regardless of eDFBBlendFlag. */
         opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
         opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
         opt.stClipRect.s32Xpos = 0;
@@ -916,9 +894,8 @@ static int MMIYOO_Available(void)
         return 1;
     }
 
-    /* Auto-detect path (SDL_VIDEODRIVER unset). MMIYOO_ProbeHardware() is
-     * currently a stub returning SDL_FALSE until real probe specifics are
-     * confirmed -- see MMIYOO_ProbeHardware() in core/mmiyoo/SDL_mmiyoo.c. */
+    /* Auto-detect path (SDL_VIDEODRIVER unset); see MMIYOO_ProbeHardware()
+     * in core/mmiyoo/SDL_mmiyoo.c. */
     if (MMIYOO_ProbeHardware()) {
         return 1;
     }
@@ -986,17 +963,7 @@ int MMIYOO_CreateWindow(_THIS, SDL_Window *window)
 
     SDL_OnWindowResized(window);
     SDL_SetMouseFocus(window);
-    /* One window, it always has focus -- without this, SDL_PrivateJoystickButton
-     * silently drops every joystick button-press since it treats "no keyboard
-     * focus" as unfocused/background.
-     *
-     * NOTE: window->flags always has SDL_WINDOW_HIDDEN set here regardless of
-     * what the caller requested -- SDL_video.c ORs it in unconditionally
-     * before calling CreateSDLWindow, only clearing it later via
-     * SDL_ShowWindow. So this cannot be conditioned on the HIDDEN flag to
-     * skip stealing focus for a throwaway offscreen-GL window; callers that
-     * create one of those after the real window already has focus must
-     * restore it themselves via MMIYOO_RaiseWindow (SDL_RaiseWindow). */
+    /* One window, it always has focus -- without this, SDL_PrivateJoystickButton drops every joystick press as unfocused. window->flags always has SDL_WINDOW_HIDDEN set here (SDL_video.c ORs it in unconditionally), so this can't be gated on HIDDEN to skip a throwaway offscreen-GL window; such callers must restore focus themselves via MMIYOO_RaiseWindow. */
     SDL_SetKeyboardFocus(window);
     MMiyooVideoInfo.window = window;
     return 0;

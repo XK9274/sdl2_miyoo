@@ -81,17 +81,7 @@ void MMIYOO_PumpEvents(_THIS)
         return;
     }
 
-    /* SELECT held as a modifier: X = vsync off/adaptive toggle. Synthesizes
-       the same SDLK_v hotkey the benchmarks already listen for (see
-       controller_input.h BTN_VSYNC_TOGGLE), so nothing on the app side
-       needs to change. SELECT's own key (RCTRL) still fires as a plain tap
-       on release if no combo was used during the hold, matching each
-       suite's existing "tap SELECT" handling (e.g. reset metrics) -- see
-       bench_driver_translate_button_event's joystick-mode mirror of this
-       same logic in common/driver_support.c. While SELECT is held,
-       SELECT/X are masked out of keypad_bitmaps below so the generic
-       per-bit loop doesn't also forward their normal keys (RCTRL/LSHIFT)
-       to the game. */
+    /* SELECT held as a modifier: X synthesizes the SDLK_v vsync-toggle hotkey; SELECT/X are masked out of keypad_bitmaps below so the plain tap still fires on release if unused. */
     {
         static uint32_t select_was_held = 0;
         static uint32_t select_combo_used = 0;
