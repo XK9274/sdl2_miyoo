@@ -129,6 +129,13 @@ typedef struct {
     SDL_Color color;
 } MMIYOO_GeometryFillVertex;
 
+typedef struct {
+    SDL_Rect srcrect;
+    SDL_FRect dstrect;
+    MI_GFX_Surface_t target_surface;
+    SDL_bool is_target_texture;
+} MMIYOO_GeometryTextureData;
+
 static void MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 static SDL_Rect MMIYOO_GetTargetBounds(const MMIYOO_RenderData *data);
 static SDL_bool MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data,
@@ -1456,16 +1463,127 @@ static int MMIYOO_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, 
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
     MMIYOO_GeometryFillVertex *verts;
+    MMIYOO_GeometryTextureData *texdata;
     int i;
     int count;
 
-    if (texture != NULL) {
-        SDL_SetError("MMIYOO geometry textures not supported");
-        return SDL_Unsupported();
-    }
-
     count = indices ? num_indices : num_vertices;
     if (count < 3) {
+        return 0;
+    }
+
+    if (texture != NULL) {
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
+        float min_u = 0.0f;
+        float min_v = 0.0f;
+        float max_u = 1.0f;
+        float max_v = 1.0f;
+        int total_r = 0;
+        int total_g = 0;
+        int total_b = 0;
+        int total_a = 0;
+        SDL_bool first = SDL_TRUE;
+
+        texdata = (MMIYOO_GeometryTextureData *)SDL_AllocateRenderVertices(renderer, sizeof(*texdata), 0, &cmd->data.draw.first);
+        if (!texdata) {
+            return -1;
+        }
+
+        for (i = 0; i < count; ++i) {
+            int j;
+            const float *xy_ptr;
+            float x;
+            float y;
+
+            if (indices) {
+                if (size_indices == 4) {
+                    j = ((const Uint32 *)indices)[i];
+                } else if (size_indices == 2) {
+                    j = ((const Uint16 *)indices)[i];
+                } else {
+                    j = ((const Uint8 *)indices)[i];
+                }
+            } else {
+                j = i;
+            }
+
+            xy_ptr = (const float *)((const char *)xy + j * xy_stride);
+            x = xy_ptr[0] * scale_x;
+            y = xy_ptr[1] * scale_y;
+
+            if (first) {
+                min_x = max_x = x;
+                min_y = max_y = y;
+            } else {
+                min_x = SDL_min(min_x, x);
+                min_y = SDL_min(min_y, y);
+                max_x = SDL_max(max_x, x);
+                max_y = SDL_max(max_y, y);
+            }
+
+            if (uv) {
+                const float *uv_ptr = (const float *)((const char *)uv + j * uv_stride);
+                float u = uv_ptr[0];
+                float v = uv_ptr[1];
+                if (first) {
+                    min_u = max_u = u;
+                    min_v = max_v = v;
+                } else {
+                    min_u = SDL_min(min_u, u);
+                    min_v = SDL_min(min_v, v);
+                    max_u = SDL_max(max_u, u);
+                    max_v = SDL_max(max_v, v);
+                }
+            }
+
+            if (color) {
+                const SDL_Color *vertex_color = (const SDL_Color *)((const char *)color + j * color_stride);
+                total_r += vertex_color->r;
+                total_g += vertex_color->g;
+                total_b += vertex_color->b;
+                total_a += vertex_color->a;
+            } else {
+                total_r += data->draw_color_r;
+                total_g += data->draw_color_g;
+                total_b += data->draw_color_b;
+                total_a += data->draw_color_a;
+            }
+
+            first = SDL_FALSE;
+        }
+
+        if (min_u < 0.0f) min_u = 0.0f;
+        if (min_v < 0.0f) min_v = 0.0f;
+        if (max_u > 1.0f) max_u = 1.0f;
+        if (max_v > 1.0f) max_v = 1.0f;
+
+        texdata->srcrect.x = SDL_max(0, (int)SDL_floorf(min_u * (float)texture->w));
+        texdata->srcrect.y = SDL_max(0, (int)SDL_floorf(min_v * (float)texture->h));
+        texdata->srcrect.w = SDL_max(1, (int)SDL_ceilf(max_u * (float)texture->w) - texdata->srcrect.x);
+        texdata->srcrect.h = SDL_max(1, (int)SDL_ceilf(max_v * (float)texture->h) - texdata->srcrect.y);
+
+        if (texdata->srcrect.x + texdata->srcrect.w > texture->w) {
+            texdata->srcrect.w = texture->w - texdata->srcrect.x;
+        }
+        if (texdata->srcrect.y + texdata->srcrect.h > texture->h) {
+            texdata->srcrect.h = texture->h - texdata->srcrect.y;
+        }
+
+        texdata->dstrect.x = min_x;
+        texdata->dstrect.y = min_y;
+        texdata->dstrect.w = SDL_max(1.0f, max_x - min_x);
+        texdata->dstrect.h = SDL_max(1.0f, max_y - min_y);
+        texdata->target_surface = data->current_target_surface;
+        texdata->is_target_texture = data->is_target_texture;
+
+        cmd->data.draw.count = 1;
+        cmd->data.draw.r = (Uint8)(total_r / count);
+        cmd->data.draw.g = (Uint8)(total_g / count);
+        cmd->data.draw.b = (Uint8)(total_b / count);
+        cmd->data.draw.a = (Uint8)(total_a / count);
         return 0;
     }
 
@@ -2018,6 +2136,45 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
     int count = (int)cmd->data.draw.count;
     MMIYOO_GeometryFillVertex *verts;
     int i;
+
+    if (cmd->data.draw.texture) {
+        MMIYOO_GeometryTextureData *texdata;
+        MI_GFX_Surface_t saved_surface;
+        SDL_bool saved_is_target_texture;
+        SDL_FPoint center;
+
+        if (count <= 0 || !vertices) {
+            return;
+        }
+
+        texdata = (MMIYOO_GeometryTextureData *)(((Uint8 *)vertices) + cmd->data.draw.first);
+        if (!texdata) {
+            MMIYOO_LOG_WARN("ProcessGeometry: textured geometry data missing");
+            return;
+        }
+
+        center.x = texdata->dstrect.w * 0.5f;
+        center.y = texdata->dstrect.h * 0.5f;
+
+        saved_surface = data->current_target_surface;
+        saved_is_target_texture = data->is_target_texture;
+
+        data->current_target_surface = texdata->target_surface;
+        data->is_target_texture = texdata->is_target_texture;
+
+        if (My_QueueCopy(renderer, cmd->data.draw.texture, NULL,
+                         &texdata->srcrect, &texdata->dstrect,
+                         cmd->data.draw.blend,
+                         E_MI_GFX_ROTATE_0, SDL_FLIP_NONE, center,
+                         cmd->data.draw.r, cmd->data.draw.g,
+                         cmd->data.draw.b, cmd->data.draw.a) != 0) {
+            MMIYOO_LOG_WARN("ProcessGeometry: textured geometry copy failed");
+        }
+
+        data->current_target_surface = saved_surface;
+        data->is_target_texture = saved_is_target_texture;
+        return;
+    }
 
     if (count < 3 || !vertices) {
         return;
