@@ -36,6 +36,10 @@ typedef struct SDL_GLDriverData {
     EGLSurface surface;
     EGLConfig config;
     EGLint swap_interval;
+    int fb_idx;
+    unsigned long fb_vaddr[2];
+    SDL_bool buffer_settings_attached;
+    SDL_bool owns_buffer_settings;
 } SDL_GLDriverData;
 
 void *glGetProcAddress(_THIS, const char *proc);
