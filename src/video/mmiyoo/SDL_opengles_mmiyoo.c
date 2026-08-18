@@ -34,8 +34,57 @@ static PFNEGLUPDATEBUFFERSETTINGSPROC p_eglUpdateBufferSettings = NULL;
 static void *ppFunc = NULL;
 static void *pfb_idx = NULL;
 static void *pfb_vaddr = NULL;
+static SDL_bool g_gles_wait_for_vsync = SDL_TRUE;
 
 // EGLBoolean eglUpdateBufferSettings(EGLDisplay display, EGLSurface surface, void *pFunc, void *fb_idx, void *fb_vaddr);
+
+static void MMIYOO_GLES_Flip(void)
+{
+    GFX_SwapBuffers(g_gles_wait_for_vsync);
+}
+
+static SDL_bool
+MMIYOO_GLES_UpdateBufferSettings(_THIS)
+{
+    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
+    void *fb_vaddr;
+
+    if (!gl_data || !p_eglUpdateBufferSettings ||
+        gl_data->display == EGL_NO_DISPLAY || gl_data->surface == EGL_NO_SURFACE) {
+        return SDL_FALSE;
+    }
+
+    fb_vaddr = GFX_GetFrameBufferVirtual();
+    if (!fb_vaddr) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
+                    "MMIYOO GLES: no mapped framebuffer for eglUpdateBufferSettings");
+        return SDL_FALSE;
+    }
+
+    /* SwiftShader's Miyoo framebuffer shim reads two virtual addresses and
+     * indexes them with fb_idx % 2. In present-copy mode there is one stable
+     * back buffer, so both entries intentionally point at the current draw
+     * buffer. In page-flip mode this helper is called again after every swap,
+     * refreshing both entries to the newly hidden page before the next frame. */
+    gl_data->fb_idx = 0;
+    gl_data->fb_vaddr[0] = (unsigned long)fb_vaddr;
+    gl_data->fb_vaddr[1] = (unsigned long)fb_vaddr;
+
+    if (p_eglUpdateBufferSettings(gl_data->display, gl_data->surface,
+                                  (void *)MMIYOO_GLES_Flip,
+                                  &gl_data->fb_idx,
+                                  gl_data->fb_vaddr) != EGL_TRUE) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
+                    "MMIYOO GLES: eglUpdateBufferSettings failed (0x%04x)",
+                    eglGetError());
+        gl_data->buffer_settings_attached = SDL_FALSE;
+        return SDL_FALSE;
+    }
+
+    gl_data->buffer_settings_attached = SDL_TRUE;
+    gl_data->owns_buffer_settings = SDL_TRUE;
+    return SDL_TRUE;
+}
 
 void
 MMIYOO_GLES_DefaultProfileConfig(_THIS, int *mask, int *major, int *minor)
@@ -83,6 +132,8 @@ void glUnloadLibrary(_THIS)
     gl_data->context = EGL_NO_CONTEXT;
     gl_data->surface = EGL_NO_SURFACE;
     gl_data->config = NULL;
+    gl_data->buffer_settings_attached = SDL_FALSE;
+    gl_data->owns_buffer_settings = SDL_FALSE;
 }
 
 SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
@@ -218,8 +269,15 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
     gl_data->surface = surface;
     gl_data->swap_interval = 1;
 
-    if (p_eglUpdateBufferSettings && ppFunc && pfb_idx && pfb_vaddr) {
-        p_eglUpdateBufferSettings(display, surface, ppFunc, pfb_idx, pfb_vaddr);
+    if (p_eglUpdateBufferSettings) {
+        if (ppFunc && pfb_idx && pfb_vaddr) {
+            if (p_eglUpdateBufferSettings(display, surface, ppFunc, pfb_idx, pfb_vaddr) == EGL_TRUE) {
+                gl_data->buffer_settings_attached = SDL_TRUE;
+                gl_data->owns_buffer_settings = SDL_FALSE;
+            }
+        } else {
+            MMIYOO_GLES_UpdateBufferSettings(_this);
+        }
     }
 
     return context;
@@ -238,6 +296,7 @@ int glSetSwapInterval(_THIS, int interval)
     }
 
     gl_data->swap_interval = interval;
+    g_gles_wait_for_vsync = (interval != 0) ? SDL_TRUE : SDL_FALSE;
     return 0;
 }
 
@@ -269,6 +328,14 @@ int glSwapWindow(_THIS, SDL_Window *window)
 
     if (eglSwapBuffers(gl_data->display, gl_data->surface) != EGL_TRUE) {
         return SDL_SetError("MMIYOO: eglSwapBuffers failed (0x%04x)", eglGetError());
+    }
+
+    if (gl_data->buffer_settings_attached) {
+        if (gl_data->owns_buffer_settings) {
+            MMIYOO_GLES_UpdateBufferSettings(_this);
+        }
+    } else {
+        GFX_SwapBuffers(gl_data->swap_interval != 0);
     }
 
     return 0;
