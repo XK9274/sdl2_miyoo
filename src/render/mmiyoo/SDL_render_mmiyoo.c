@@ -173,6 +173,12 @@ struct MMIYOO_RenderData {
     Uint64 timing_geometry_ticks;
     Uint64 timing_lines_ticks;
     Uint64 timing_misc_ticks;
+
+    /* SDL_MMIYOO_GEOMETRY_QUICKPATH hint: collapse a glyph quad's two
+     * identical-rect triangles into one blit instead of two. Off by
+     * default -- trades a little text crispness (drops the accidental
+     * double alpha-composite) for fewer hardware blits. */
+    SDL_bool geometry_quickpath_enabled;
 };
 
 typedef struct {
@@ -196,6 +202,7 @@ typedef struct {
 typedef struct {
     SDL_Rect srcrect;
     SDL_FRect dstrect;
+    SDL_bool skip; /* SDL_MMIYOO_GEOMETRY_QUICKPATH: duplicate of the previous triangle, drop its blit */
 } MMIYOO_GeometryTextureTri;
 
 /* One bounding-box hardware blit per triangle, not one for the whole
@@ -1797,6 +1804,22 @@ static int MMIYOO_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, 
             tri->dstrect.y = min_y;
             tri->dstrect.w = SDL_max(1.0f, max_x - min_x);
             tri->dstrect.h = SDL_max(1.0f, max_y - min_y);
+            tri->skip = SDL_FALSE;
+
+            /* SDL_MMIYOO_GEOMETRY_QUICKPATH: a glyph quad's two triangles
+             * (an axis-aligned diagonal split) always compute identical
+             * rects here -- drop the second's blit rather than draw the
+             * same rect twice. Local per-pair check only, never merges
+             * across distinct glyphs. */
+            if (data->geometry_quickpath_enabled && (i & 1) == 1) {
+                MMIYOO_GeometryTextureTri *prev = &tris[i - 1];
+                if (tri->srcrect.x == prev->srcrect.x && tri->srcrect.y == prev->srcrect.y &&
+                    tri->srcrect.w == prev->srcrect.w && tri->srcrect.h == prev->srcrect.h &&
+                    tri->dstrect.x == prev->dstrect.x && tri->dstrect.y == prev->dstrect.y &&
+                    tri->dstrect.w == prev->dstrect.w && tri->dstrect.h == prev->dstrect.h) {
+                    tri->skip = SDL_TRUE;
+                }
+            }
         }
 
         texdata->target_surface = data->current_target_surface;
@@ -2395,6 +2418,10 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
             MMIYOO_GeometryTextureTri *tri = &tris[t];
             SDL_FPoint center;
             SDL_bool used_quickfill = SDL_FALSE;
+
+            if (tri->skip) {
+                continue;
+            }
 
             /* Fast path: a 1x1 source texture (SDL2's "tint a single pixel"
              * trick for solid/gradient-panel fills -- common in Ozone menu
@@ -2997,6 +3024,13 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         const char *timing_hint = SDL_GetHint("SDL_MMIYOO_FRAME_TIMING");
         if (timing_hint && SDL_atoi(timing_hint) != 0) {
             data->collect_frame_timing = SDL_TRUE;
+        }
+    }
+
+    {
+        const char *quickpath_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_QUICKPATH");
+        if (quickpath_hint && SDL_atoi(quickpath_hint) != 0) {
+            data->geometry_quickpath_enabled = SDL_TRUE;
         }
     }
 
