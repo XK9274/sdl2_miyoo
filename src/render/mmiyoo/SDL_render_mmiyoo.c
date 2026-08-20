@@ -163,6 +163,16 @@ struct MMIYOO_RenderData {
     Uint64 timing_blit_calls;
     Uint64 timing_frames;
     Uint64 timing_window_start_ticks;
+
+    /* cmdQueue breakdown by SDL_RenderCommand category, so the aggregate
+     * cmdQueue number can be attributed to fills/QuickFill, copies/blits,
+     * textured geometry, lines, or trivial state-setting commands, instead
+     * of guessing from blit-call counts alone. */
+    Uint64 timing_fill_ticks;
+    Uint64 timing_copy_ticks;
+    Uint64 timing_geometry_ticks;
+    Uint64 timing_lines_ticks;
+    Uint64 timing_misc_ticks;
 };
 
 typedef struct {
@@ -1378,10 +1388,20 @@ static int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
                                     mmiyoo_texture->size);
             }
             if (MI_SYS_MMA_Alloc(NULL, mmiyoo_texture->size, &mmiyoo_texture->phyAddr) != MI_SUCCESS) {
-                printf("ERROR: MI_SYS_MMA_Alloc FAILED size=%u (%ux%u %s) live=%d\n",
-                       mmiyoo_texture->size, mmiyoo_texture->width, mmiyoo_texture->height,
-                       format_name, mmiyoo_texture_live_count);
-                fflush(stdout);
+                /* A caller that keeps retrying the same failing allocation
+                 * every frame (observed: one texture retried ~100+ times
+                 * in under two minutes) would otherwise spam this on every
+                 * attempt -- each print+fflush is synchronous I/O over a
+                 * 115200-baud serial console (console=ttyS0,115200), a real
+                 * per-frame cost. Rate-limit instead of silencing outright. */
+                static unsigned int oom_log_count = 0;
+                ++oom_log_count;
+                if (oom_log_count <= 3 || (oom_log_count % 50) == 0) {
+                    printf("ERROR: MI_SYS_MMA_Alloc FAILED size=%u (%ux%u %s) live=%d (occurrence #%u)\n",
+                           mmiyoo_texture->size, mmiyoo_texture->width, mmiyoo_texture->height,
+                           format_name, mmiyoo_texture_live_count, oom_log_count);
+                    fflush(stdout);
+                }
                 SDL_free(mmiyoo_texture);
                 return SDL_OutOfMemory();
             }
@@ -2449,6 +2469,8 @@ static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd
     Uint64 timing_start = data->collect_frame_timing ? SDL_GetPerformanceCounter() : 0;
 
     while (cmd) {
+        Uint64 cmd_start = data->collect_frame_timing ? SDL_GetPerformanceCounter() : 0;
+
         switch (cmd->command) {
             case SDL_RENDERCMD_SETVIEWPORT:
                 MMIYOO_QueueSetViewport(renderer, cmd);
@@ -2622,6 +2644,31 @@ static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd
             default:
                 break;
         }
+
+        if (data->collect_frame_timing) {
+            Uint64 elapsed = SDL_GetPerformanceCounter() - cmd_start;
+            switch (cmd->command) {
+                case SDL_RENDERCMD_CLEAR:
+                case SDL_RENDERCMD_DRAW_POINTS:
+                case SDL_RENDERCMD_FILL_RECTS:
+                    data->timing_fill_ticks += elapsed;
+                    break;
+                case SDL_RENDERCMD_COPY:
+                case SDL_RENDERCMD_COPY_EX:
+                    data->timing_copy_ticks += elapsed;
+                    break;
+                case SDL_RENDERCMD_GEOMETRY:
+                    data->timing_geometry_ticks += elapsed;
+                    break;
+                case SDL_RENDERCMD_DRAW_LINES:
+                    data->timing_lines_ticks += elapsed;
+                    break;
+                default:
+                    data->timing_misc_ticks += elapsed;
+                    break;
+            }
+        }
+
         cmd = cmd->next;
     }
     if (data->collect_frame_timing) {
@@ -2703,23 +2750,35 @@ static void MMIYOO_RenderPresent(SDL_Renderer *renderer)
 
             if (data->timing_window_start_ticks == 0) {
                 data->timing_window_start_ticks = now;
-            } else if (now - data->timing_window_start_ticks >= freq) {
+            } else if (now - data->timing_window_start_ticks >= freq && data->timing_frames > 0) {
                 double window_s = (double)(now - data->timing_window_start_ticks) / (double)freq;
-                double fps = (double)data->timing_frames / window_s;
-                double cmdqueue_ms_per_frame = (double)data->timing_command_queue_ticks * 1000.0 /
-                                                (double)freq / (double)data->timing_frames;
-                double present_ms_per_frame = (double)data->timing_present_ticks * 1000.0 /
-                                               (double)freq / (double)data->timing_frames;
-                double blits_per_frame = (double)data->timing_blit_calls / (double)data->timing_frames;
+                double frame_count = (double)data->timing_frames;
+                double fps = frame_count / window_s;
+                double cmdqueue_ms_per_frame = (double)data->timing_command_queue_ticks * 1000.0 / (double)freq / frame_count;
+                double present_ms_per_frame = (double)data->timing_present_ticks * 1000.0 / (double)freq / frame_count;
+                double blits_per_frame = (double)data->timing_blit_calls / frame_count;
+                double fill_ms = (double)data->timing_fill_ticks * 1000.0 / (double)freq / frame_count;
+                double copy_ms = (double)data->timing_copy_ticks * 1000.0 / (double)freq / frame_count;
+                double geometry_ms = (double)data->timing_geometry_ticks * 1000.0 / (double)freq / frame_count;
+                double lines_ms = (double)data->timing_lines_ticks * 1000.0 / (double)freq / frame_count;
+                double misc_ms = (double)data->timing_misc_ticks * 1000.0 / (double)freq / frame_count;
 
                 SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
                             "MMIYOO frame timing: fps=%.1f cmdQueue=%.2fms/frame present=%.2fms/frame blits=%.1f/frame",
                             fps, cmdqueue_ms_per_frame, present_ms_per_frame, blits_per_frame);
+                SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
+                            "MMIYOO cmdQueue breakdown: fill=%.2fms copy=%.2fms geometry=%.2fms lines=%.2fms misc=%.2fms (ms/frame)",
+                            fill_ms, copy_ms, geometry_ms, lines_ms, misc_ms);
 
                 data->timing_command_queue_ticks = 0;
                 data->timing_present_ticks = 0;
                 data->timing_blit_calls = 0;
                 data->timing_frames = 0;
+                data->timing_fill_ticks = 0;
+                data->timing_copy_ticks = 0;
+                data->timing_geometry_ticks = 0;
+                data->timing_lines_ticks = 0;
+                data->timing_misc_ticks = 0;
                 data->timing_window_start_ticks = now;
             }
         }
@@ -3013,8 +3072,16 @@ SDL_RenderDriver MMIYOO_RenderDriver = {
             [7] = SDL_PIXELFORMAT_ARGB4444,
             [8] = SDL_PIXELFORMAT_RGBA4444,
         },
-        .max_texture_width = 800,
-        .max_texture_height = 600,
+        /* No documented hardware ceiling found for MI_GFX (a 2D blit
+         * engine, not a sampler-bound 3D texture unit) -- 800x600 here had
+         * no basis in any real constraint and was rejecting RetroArch's
+         * font atlas outright ("Texture dimensions are limited to
+         * 800x600"), which is the likely trigger for a fallback cascade of
+         * hundreds of small per-glyph/icon textures instead of one atlas.
+         * Raised to a generous, still-conservative bound pending real
+         * on-device confirmation of the actual MI_GFX ceiling. */
+        .max_texture_width = 2048,
+        .max_texture_height = 2048,
     }
 };
 
