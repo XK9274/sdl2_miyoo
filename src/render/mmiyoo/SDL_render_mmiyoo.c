@@ -2394,6 +2394,57 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
         for (t = 0; t < texdata->tri_count; ++t) {
             MMIYOO_GeometryTextureTri *tri = &tris[t];
             SDL_FPoint center;
+            SDL_bool used_quickfill = SDL_FALSE;
+
+            /* Fast path: a 1x1 source texture (SDL2's "tint a single pixel"
+             * trick for solid/gradient-panel fills -- common in Ozone menu
+             * geometry) has no spatial detail to lose, so a fully-opaque
+             * draw can be redirected to the same proven QuickFill span path
+             * the untextured fill geometry already uses, instead of a real
+             * hardware texture blit per triangle. MI_GFX_QuickFill has no
+             * blend flags at all, so this only ever engages when the result
+             * is fully opaque -- never for real translucency, which still
+             * goes through My_QueueCopy below unchanged. Caveat: uses the
+             * triangle's bounding box (not exact triangle coverage), which
+             * is exact for the common case (2 right triangles forming an
+             * axis-aligned rect) but could over-paint a non-rectangular
+             * triangle (e.g. a diagonal divider) slightly beyond its true
+             * edge -- watch for that specifically when checking this. */
+            if (cmd->data.draw.texture->w == 1 && cmd->data.draw.texture->h == 1) {
+                MMIYOO_TextureData *tex1x1 = (MMIYOO_TextureData *)cmd->data.draw.texture->driverdata;
+                if (tex1x1 && tex1x1->virAddr && tex1x1->bytes_per_pixel == 4 &&
+                    (tex1x1->mi_format == E_MI_GFX_FMT_ABGR8888 || tex1x1->mi_format == E_MI_GFX_FMT_ARGB8888)) {
+                    const Uint8 *px = (const Uint8 *)tex1x1->virAddr;
+                    Uint8 pr, pg, pb, pa;
+
+                    if (tex1x1->mi_format == E_MI_GFX_FMT_ABGR8888) {
+                        pr = px[0]; pg = px[1]; pb = px[2]; pa = px[3];
+                    } else {
+                        pb = px[0]; pg = px[1]; pr = px[2]; pa = px[3];
+                    }
+
+                    if (pa == 255 && cmd->data.draw.a == 255) {
+                        Uint8 fr = (Uint8)(((int)pr * cmd->data.draw.r + 127) / 255);
+                        Uint8 fg = (Uint8)(((int)pg * cmd->data.draw.g + 127) / 255);
+                        Uint8 fb = (Uint8)(((int)pb * cmd->data.draw.b + 127) / 255);
+                        SDL_Rect prepared_dst;
+
+                        prepared_dst.x = (int)SDL_floorf(tri->dstrect.x);
+                        prepared_dst.y = (int)SDL_floorf(tri->dstrect.y);
+                        prepared_dst.w = SDL_max(1, (int)SDL_ceilf(tri->dstrect.w));
+                        prepared_dst.h = SDL_max(1, (int)SDL_ceilf(tri->dstrect.h));
+
+                        if (MMIYOO_PrepareDrawRect(renderer, data, &prepared_dst, NULL, NULL, NULL)) {
+                            MMIYOO_ExecuteQuickFill(data, &prepared_dst, MMIYOO_PackColor(fr, fg, fb, 255));
+                            used_quickfill = SDL_TRUE;
+                        }
+                    }
+                }
+            }
+
+            if (used_quickfill) {
+                continue;
+            }
 
             center.x = tri->dstrect.w * 0.5f;
             center.y = tri->dstrect.h * 0.5f;
