@@ -3157,16 +3157,20 @@ SDL_RenderDriver MMIYOO_RenderDriver = {
             [7] = SDL_PIXELFORMAT_ARGB4444,
             [8] = SDL_PIXELFORMAT_RGBA4444,
         },
-        /* No documented hardware ceiling found for MI_GFX (a 2D blit
-         * engine, not a sampler-bound 3D texture unit) -- 800x600 here had
-         * no basis in any real constraint and was rejecting RetroArch's
-         * font atlas outright ("Texture dimensions are limited to
-         * 800x600"), which is the likely trigger for a fallback cascade of
-         * hundreds of small per-glyph/icon textures instead of one atlas.
-         * Raised to a generous, still-conservative bound pending real
-         * on-device confirmation of the actual MI_GFX ceiling. */
-        .max_texture_width = 2048,
-        .max_texture_height = 2048,
+        /* Matches the real panel resolution (640x480). The previous 800x600
+         * value had no basis in any documented MI_GFX hardware constraint
+         * (a 2D blit engine, not a sampler-bound 3D texture unit) and was
+         * rejecting RetroArch's font atlas outright. A larger 2048x2048
+         * bound was tried and confirmed to let some UI elements render at
+         * an unexpectedly large/oversized size (suspected of causing the
+         * "massive FPS-counter texture" regression) -- 640x480 is the
+         * conservative middle ground: still well above the old 800x600's
+         * failure case for a same-panel-size atlas, without opening the
+         * door to arbitrarily large textures. Revisit with real on-device
+         * measurement of the actual MI_GFX ceiling if a genuinely
+         * larger-than-panel texture is ever legitimately needed. */
+        .max_texture_width = 640,
+        .max_texture_height = 480,
     }
 };
 
