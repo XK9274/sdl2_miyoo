@@ -1337,9 +1337,8 @@ static int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     MI_GFX_ColorFmt_e mi_format;
     const char *format_name;
 
-    printf("MMIYOO_CreateTexture: format=0x%08x size=%dx%d access=%d\n",
-           texture->format, texture->w, texture->h, texture->access);
-    fflush(stdout);
+    MMIYOO_VERBOSE_LOG("CreateTexture: format=0x%08x size=%dx%d access=%d",
+                        texture->format, texture->w, texture->h, texture->access);
 
     mmiyoo_texture = (MMIYOO_TextureData *)SDL_calloc(1, sizeof(*mmiyoo_texture));
 
@@ -2757,7 +2756,39 @@ static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd
 
 static int MMIYOO_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect *rect, Uint32 pixel_format, void *pixels, int pitch)
 {
-    return SDL_Unsupported();
+    MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
+    MMIYOO_TextureData *src_texture;
+    void *src_pixels;
+
+    /* Only the target-texture case has a CPU-mapped, format-known source to
+     * read from (mirrors SW_RenderReadPixels in src/render/software/SDL_render_sw.c).
+     * The default/window target's only CPU-visible buffer is gfx.back
+     * (src/video/mmiyoo/SDL_video_mmiyoo.h), whose runtime pixel format was
+     * never verified on-device -- guessing it wrong would silently hand back
+     * corrupted pixels instead of a clean error, so that case stays
+     * unsupported, same as PSP_RenderReadPixels for the same reason. */
+    if (!data->is_target_texture || !data->boundTarget) {
+        return SDL_Unsupported();
+    }
+
+    src_texture = (MMIYOO_TextureData *)data->boundTarget->driverdata;
+    if (!src_texture || !src_texture->virAddr) {
+        return SDL_Unsupported();
+    }
+
+    if (rect->x < 0 || rect->y < 0 ||
+        (unsigned int)(rect->x + rect->w) > src_texture->width ||
+        (unsigned int)(rect->y + rect->h) > src_texture->height) {
+        return SDL_SetError("Tried to read outside of texture bounds");
+    }
+
+    src_pixels = (Uint8 *)src_texture->virAddr +
+                 rect->y * src_texture->pitch +
+                 rect->x * src_texture->bytes_per_pixel;
+
+    return SDL_ConvertPixels(rect->w, rect->h,
+                              src_texture->format, src_pixels, src_texture->pitch,
+                              pixel_format, pixels, pitch);
 }
 
 static SDL_bool
