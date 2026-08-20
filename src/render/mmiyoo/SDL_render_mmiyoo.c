@@ -179,6 +179,17 @@ struct MMIYOO_RenderData {
      * default -- trades a little text crispness (drops the accidental
      * double alpha-composite) for fewer hardware blits. */
     SDL_bool geometry_quickpath_enabled;
+
+    /* SDL_MMIYOO_INTEGER_SCALE hint (on by default): software NEON
+     * nearest-neighbor upscale of the core-content frame before an
+     * unscaled hardware present, since MI_GFX_BitBlit has no
+     * interpolation control at all (see notes/blurry-scaling-investigation.md).
+     * Persistent MI_SYS scratch buffer, reused across frames, resized
+     * only when the required size grows. */
+    SDL_bool integer_scale_enabled;
+    MI_PHY scale_scratch_phy;
+    void *scale_scratch_vir;
+    unsigned int scale_scratch_alloc_size;
 };
 
 typedef struct {
@@ -1983,6 +1994,216 @@ MMIYOO_FlipToMirror(SDL_RendererFlip flip)
     return E_MI_GFX_MIRROR_NONE;
 }
 
+/* Core-content integer-scale upscaler.
+ *
+ * MI_GFX_BitBlit has no interpolation control at all (confirmed against the
+ * full vendor mi_gfx.h/mi_gfx_datatype.h surface -- MI_GFX_Opt_t has no
+ * scaling-filter field, and the old SDL1.2 Miyoo backend hits the exact same
+ * hardware API the exact same way, so the softness isn't a missing hardware
+ * flag). Reference for this approach: Onion's shipped RetroArch
+ * gfx/drivers/miyoomini/ driver (github.com/OnionUI/RetroArch, GPLv3) scales
+ * core content in software before an unscaled hardware present -- that
+ * architecture is credited here, but no code from it is used. The actual
+ * scaler functions below come from neon-arm-library-miyoo
+ * (github.com/XK9274/neon-arm-library-miyoo, already linked into every
+ * sdl2_miyoo build as libneonarmmiyoo -- see that repo's own README for its
+ * attribution disclaimer), which was already compiled into this driver and
+ * unused for scaling until now. Full research notes:
+ * notes/blurry-scaling-investigation.md (gitignored, local only). */
+
+typedef void (*MMIYOO_NeonScaleFunc)(void *src, void *dst, uint32_t sw, uint32_t sh, uint32_t sp, uint32_t dp);
+
+static int
+MMIYOO_ClampHorizontalMul(int raw)
+{
+    /* neon-arm-library-miyoo only provides horizontal multipliers of 1, 2,
+     * or 4 (no 3x variant -- 4x is cheaper than 3x on this NEON path, same
+     * constraint Onion's driver documents for the same library family). */
+    if (raw >= 4) return 4;
+    if (raw >= 2) return 2;
+    return 1;
+}
+
+static int
+MMIYOO_ClampVerticalMul(int raw)
+{
+    if (raw < 1) return 1;
+    if (raw > 4) return 4;
+    return raw;
+}
+
+static MMIYOO_NeonScaleFunc
+MMIYOO_PickScaleFunc(int xmul, int ymul, unsigned int bytes_per_pixel)
+{
+    if (bytes_per_pixel == 2) {
+        switch (xmul) {
+            case 1:
+                switch (ymul) {
+                    case 1: return (MMIYOO_NeonScaleFunc)scale1x1_n16;
+                    case 2: return (MMIYOO_NeonScaleFunc)scale1x2_n16;
+                    case 3: return (MMIYOO_NeonScaleFunc)scale1x3_n16;
+                    default: return (MMIYOO_NeonScaleFunc)scale1x4_n16;
+                }
+            case 2:
+                switch (ymul) {
+                    case 1: return (MMIYOO_NeonScaleFunc)scale2x1_n16;
+                    case 2: return (MMIYOO_NeonScaleFunc)scale2x2_n16;
+                    case 3: return (MMIYOO_NeonScaleFunc)scale2x3_n16;
+                    default: return (MMIYOO_NeonScaleFunc)scale2x4_n16;
+                }
+            default:
+                switch (ymul) {
+                    case 1: return (MMIYOO_NeonScaleFunc)scale4x1_n16;
+                    case 2: return (MMIYOO_NeonScaleFunc)scale4x2_n16;
+                    case 3: return (MMIYOO_NeonScaleFunc)scale4x3_n16;
+                    default: return (MMIYOO_NeonScaleFunc)scale4x4_n16;
+                }
+        }
+    } else {
+        switch (xmul) {
+            case 1:
+                switch (ymul) {
+                    case 1: return (MMIYOO_NeonScaleFunc)scale1x1_n32;
+                    case 2: return (MMIYOO_NeonScaleFunc)scale1x2_n32;
+                    case 3: return (MMIYOO_NeonScaleFunc)scale1x3_n32;
+                    default: return (MMIYOO_NeonScaleFunc)scale1x4_n32;
+                }
+            case 2:
+                switch (ymul) {
+                    case 1: return (MMIYOO_NeonScaleFunc)scale2x1_n32;
+                    case 2: return (MMIYOO_NeonScaleFunc)scale2x2_n32;
+                    case 3: return (MMIYOO_NeonScaleFunc)scale2x3_n32;
+                    default: return (MMIYOO_NeonScaleFunc)scale2x4_n32;
+                }
+            default:
+                switch (ymul) {
+                    case 1: return (MMIYOO_NeonScaleFunc)scale4x1_n32;
+                    case 2: return (MMIYOO_NeonScaleFunc)scale4x2_n32;
+                    case 3: return (MMIYOO_NeonScaleFunc)scale4x3_n32;
+                    default: return (MMIYOO_NeonScaleFunc)scale4x4_n32;
+                }
+        }
+    }
+}
+
+/* Ensures data->scale_scratch_{phy,vir,alloc_size} can hold at least
+ * required_size bytes, growing (never shrinking) as needed. Persistent for
+ * the renderer's lifetime -- freed in MMIYOO_DestroyRenderer. */
+static SDL_bool
+MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
+{
+    MI_PHY new_phy = 0;
+    void *new_vir = NULL;
+
+    if (data->scale_scratch_vir && data->scale_scratch_alloc_size >= required_size) {
+        return SDL_TRUE;
+    }
+
+    if (MI_SYS_MMA_Alloc(NULL, required_size, &new_phy) != MI_SUCCESS) {
+        return SDL_FALSE;
+    }
+    if (MI_SYS_Mmap(new_phy, required_size, &new_vir, TRUE) != MI_SUCCESS) {
+        MI_SYS_MMA_Free(new_phy);
+        return SDL_FALSE;
+    }
+
+    if (data->scale_scratch_vir) {
+        MI_SYS_Munmap(data->scale_scratch_vir, data->scale_scratch_alloc_size);
+        MI_SYS_MMA_Free(data->scale_scratch_phy);
+    }
+
+    data->scale_scratch_phy = new_phy;
+    data->scale_scratch_vir = new_vir;
+    data->scale_scratch_alloc_size = required_size;
+    return SDL_TRUE;
+}
+
+/* Attempts a software integer-scale of the core-content frame. On success,
+ * rewrites pixels, pitch, and src_phy to point at the scaled scratch buffer,
+ * rewrites src to (0, 0, scaled_w, scaled_h), rewrites dst to the
+ * letterboxed-centered destination rect within the originally-requested
+ * dst, and returns SDL_TRUE -- the caller then presents this unscaled via
+ * the normal GFX_Copy path. Returns SDL_FALSE (nothing rewritten) whenever
+ * scaling doesn't apply or fails, so the caller falls through to today's
+ * unscaled/hardware-scaled behavior unchanged. */
+static SDL_bool
+MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
+                            MMIYOO_TextureData *src_texture_data,
+                            SDL_Rect *src, SDL_Rect *dst,
+                            SDL_BlendMode blend_mode,
+                            const void **pixels, int *pitch, MI_PHY *src_phy)
+{
+    int xmul_raw, ymul_raw, xmul, ymul;
+    int scaled_w, scaled_h;
+    unsigned int required_size;
+    MMIYOO_NeonScaleFunc scale_func;
+    unsigned int bpp;
+
+    if (!data->integer_scale_enabled) {
+        return SDL_FALSE;
+    }
+    if (blend_mode != SDL_BLENDMODE_NONE) {
+        return SDL_FALSE;
+    }
+    if (texture->access != SDL_TEXTUREACCESS_STREAMING) {
+        return SDL_FALSE;
+    }
+    if (src->w <= 0 || src->h <= 0 || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (src->w == dst->w && src->h == dst->h) {
+        return SDL_FALSE;
+    }
+
+    bpp = src_texture_data->bytes_per_pixel;
+    if (bpp != 2 && bpp != 4) {
+        return SDL_FALSE;
+    }
+
+    xmul_raw = dst->w / src->w;
+    ymul_raw = dst->h / src->h;
+    if (xmul_raw < 1 || ymul_raw < 1) {
+        /* Downscale request -- these scalers only upscale, leave it to the
+         * existing hardware path. */
+        return SDL_FALSE;
+    }
+
+    xmul = MMIYOO_ClampHorizontalMul(xmul_raw);
+    ymul = MMIYOO_ClampVerticalMul(ymul_raw);
+
+    scaled_w = src->w * xmul;
+    scaled_h = src->h * ymul;
+    required_size = (unsigned int)(scaled_w * scaled_h) * bpp;
+    /* NEON scalers need 32-bit-aligned rows; matches the alignment
+     * MMIYOO_CreateTexture already applies to its own texture pitches. */
+    required_size = (required_size + 63) & ~63u;
+
+    if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
+        return SDL_FALSE;
+    }
+
+    scale_func = MMIYOO_PickScaleFunc(xmul, ymul, bpp);
+    scale_func((void *)*pixels, data->scale_scratch_vir,
+               (uint32_t)src->w, (uint32_t)src->h,
+               (uint32_t)*pitch, (uint32_t)(scaled_w * (int)bpp));
+
+    dst->x += (dst->w - scaled_w) / 2;
+    dst->y += (dst->h - scaled_h) / 2;
+    dst->w = scaled_w;
+    dst->h = scaled_h;
+
+    src->x = 0;
+    src->y = 0;
+    src->w = scaled_w;
+    src->h = scaled_h;
+
+    *pixels = data->scale_scratch_vir;
+    *pitch = scaled_w * (int)bpp;
+    *src_phy = data->scale_scratch_phy;
+
+    return SDL_TRUE;
+}
+
 int My_QueueCopy(SDL_Renderer *renderer,
                  SDL_Texture *texture,
                  const void *pixels,
@@ -2000,6 +2221,7 @@ int My_QueueCopy(SDL_Renderer *renderer,
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
     MMIYOO_TextureData *src_texture_data;
     MMIYOO_TextureData *dst_texture_data;
+    SDL_bool used_integer_scale = SDL_FALSE;
     int pitch = 0;
     MI_PHY src_phy = 0;
     int copy_result;
@@ -2084,6 +2306,15 @@ int My_QueueCopy(SDL_Renderer *renderer,
     effective_rotation = MMIYOO_AddRotations(base_rotation, extra_rotation);
     mirror = MMIYOO_FlipToMirror(flip);
 
+    /* Core-content software integer-scale, gated to the final present of a
+     * streaming (per-frame-updated) texture -- see MMIYOO_TryIntegerScaleCopy
+     * above. Only applies to the default/window target; a target-texture
+     * copy (e.g. into an intermediate render target) is left alone. */
+    if (!data->is_target_texture && extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
+        used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
+                                                          blend_mode, &pixels, &pitch, &src_phy);
+    }
+
     // DMA optimization: if both source and target are MI_SYS textures, use hardware blit
     if (data->is_target_texture && data->boundTarget && blend_mode == SDL_BLENDMODE_NONE) {
         dst_texture_data = (MMIYOO_TextureData *)data->boundTarget->driverdata;
@@ -2122,7 +2353,7 @@ int My_QueueCopy(SDL_Renderer *renderer,
         }
     }
 
-    if (src_texture_data) {
+    if (src_texture_data && !used_integer_scale) {
         src_phy = src_texture_data->phyAddr;
     }
 
@@ -2956,6 +3187,10 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
             MI_GFX_WaitAllDone(TRUE, 0);
             data->initialized = SDL_FALSE;
         }
+        if (data->scale_scratch_vir) {
+            MI_SYS_Munmap(data->scale_scratch_vir, data->scale_scratch_alloc_size);
+            MI_SYS_MMA_Free(data->scale_scratch_phy);
+        }
         SDL_free(data);
     }
 
@@ -3062,6 +3297,17 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         const char *quickpath_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_QUICKPATH");
         if (quickpath_hint && SDL_atoi(quickpath_hint) != 0) {
             data->geometry_quickpath_enabled = SDL_TRUE;
+        }
+    }
+
+    /* On by default -- this is the fix for core-content softness, not an
+     * opt-in experiment. Set SDL_MMIYOO_INTEGER_SCALE=0 to fall back to
+     * today's unscaled-blit-only behavior. */
+    data->integer_scale_enabled = SDL_TRUE;
+    {
+        const char *integer_scale_hint = SDL_GetHint("SDL_MMIYOO_INTEGER_SCALE");
+        if (integer_scale_hint && SDL_atoi(integer_scale_hint) == 0) {
+            data->integer_scale_enabled = SDL_FALSE;
         }
     }
 
