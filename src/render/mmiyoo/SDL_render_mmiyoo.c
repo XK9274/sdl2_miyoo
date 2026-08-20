@@ -109,6 +109,15 @@ struct MMIYOO_RenderData {
     int framebuffer_width;
     int framebuffer_height;
 
+    // Optional per-frame timing instrumentation (SDL_MMIYOO_FRAME_TIMING hint)
+    // -- finds where frame time actually goes (command-queue processing vs.
+    // present/swap) instead of guessing from blit-call counts alone.
+    SDL_bool collect_frame_timing;
+    Uint64 timing_command_queue_ticks;
+    Uint64 timing_present_ticks;
+    Uint64 timing_blit_calls;
+    Uint64 timing_frames;
+    Uint64 timing_window_start_ticks;
 };
 
 typedef struct {
@@ -1805,6 +1814,10 @@ int My_QueueCopy(SDL_Renderer *renderer,
     int rotated_width;
     int rotated_height;
 
+    if (data->collect_frame_timing) {
+        data->timing_blit_calls += 1;
+    }
+
     if (dst_width <= 0.0f || dst_height <= 0.0f) {
         return 0;
     }
@@ -2262,6 +2275,7 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
 static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd, void *vertices, size_t vertsize)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
+    Uint64 timing_start = data->collect_frame_timing ? SDL_GetPerformanceCounter() : 0;
 
     while (cmd) {
         switch (cmd->command) {
@@ -2439,6 +2453,9 @@ static int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd
         }
         cmd = cmd->next;
     }
+    if (data->collect_frame_timing) {
+        data->timing_command_queue_ticks += SDL_GetPerformanceCounter() - timing_start;
+    }
     return 1;
 }
 
@@ -2484,23 +2501,57 @@ static void MMIYOO_RenderPresent(SDL_Renderer *renderer)
                  data->viewport.w, data->viewport.h,
                  data->viewport.x, data->viewport.y);
 
-    GFX_FlushTextureFences();
+    {
+        Uint64 present_timing_start = data->collect_frame_timing ? SDL_GetPerformanceCounter() : 0;
 
-    if (!data->is_target_texture || data->texture_blitted_to_screen) {
-        GFX_SwapBuffers(data->vsync);
-        mmiyoo_update_present_vsync_flag(renderer, data->vsync);
-        if (!was_target_texture) {
-            data->current_target_surface.phyAddr = GFX_GetFrameBuffer();
-            data->current_target_surface.u32Stride = GFX_GetFrameStride();
-            data->current_target_surface.u32Width = GFX_GetFrameWidth();
-            data->current_target_surface.u32Height = GFX_GetFrameHeight();
-            data->framebuffer_width = (int)data->current_target_surface.u32Width;
-            data->framebuffer_height = (int)data->current_target_surface.u32Height;
-        } else {
-            data->current_target_surface = target_surface_before;
-            data->is_target_texture = SDL_TRUE;
+        GFX_FlushTextureFences();
+
+        if (!data->is_target_texture || data->texture_blitted_to_screen) {
+            GFX_SwapBuffers(data->vsync);
+            mmiyoo_update_present_vsync_flag(renderer, data->vsync);
+            if (!was_target_texture) {
+                data->current_target_surface.phyAddr = GFX_GetFrameBuffer();
+                data->current_target_surface.u32Stride = GFX_GetFrameStride();
+                data->current_target_surface.u32Width = GFX_GetFrameWidth();
+                data->current_target_surface.u32Height = GFX_GetFrameHeight();
+                data->framebuffer_width = (int)data->current_target_surface.u32Width;
+                data->framebuffer_height = (int)data->current_target_surface.u32Height;
+            } else {
+                data->current_target_surface = target_surface_before;
+                data->is_target_texture = SDL_TRUE;
+            }
+            data->texture_blitted_to_screen = SDL_FALSE;
         }
-        data->texture_blitted_to_screen = SDL_FALSE;
+
+        if (data->collect_frame_timing) {
+            Uint64 now = SDL_GetPerformanceCounter();
+            Uint64 freq = SDL_GetPerformanceFrequency();
+
+            data->timing_present_ticks += now - present_timing_start;
+            data->timing_frames += 1;
+
+            if (data->timing_window_start_ticks == 0) {
+                data->timing_window_start_ticks = now;
+            } else if (now - data->timing_window_start_ticks >= freq) {
+                double window_s = (double)(now - data->timing_window_start_ticks) / (double)freq;
+                double fps = (double)data->timing_frames / window_s;
+                double cmdqueue_ms_per_frame = (double)data->timing_command_queue_ticks * 1000.0 /
+                                                (double)freq / (double)data->timing_frames;
+                double present_ms_per_frame = (double)data->timing_present_ticks * 1000.0 /
+                                               (double)freq / (double)data->timing_frames;
+                double blits_per_frame = (double)data->timing_blit_calls / (double)data->timing_frames;
+
+                SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
+                            "MMIYOO frame timing: fps=%.1f cmdQueue=%.2fms/frame present=%.2fms/frame blits=%.1f/frame",
+                            fps, cmdqueue_ms_per_frame, present_ms_per_frame, blits_per_frame);
+
+                data->timing_command_queue_ticks = 0;
+                data->timing_present_ticks = 0;
+                data->timing_blit_calls = 0;
+                data->timing_frames = 0;
+                data->timing_window_start_ticks = now;
+            }
+        }
     }
 
     if (data->collect_span_stats) {
@@ -2657,6 +2708,13 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         const char *geom_stats_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_STATS");
         if (geom_stats_hint && SDL_atoi(geom_stats_hint) != 0) {
             data->collect_span_stats = SDL_TRUE;
+        }
+    }
+
+    {
+        const char *timing_hint = SDL_GetHint("SDL_MMIYOO_FRAME_TIMING");
+        if (timing_hint && SDL_atoi(timing_hint) != 0) {
+            data->collect_frame_timing = SDL_TRUE;
         }
     }
 
