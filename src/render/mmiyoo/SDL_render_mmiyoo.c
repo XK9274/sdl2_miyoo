@@ -132,8 +132,19 @@ typedef struct {
 typedef struct {
     SDL_Rect srcrect;
     SDL_FRect dstrect;
+} MMIYOO_GeometryTextureTri;
+
+/* One bounding-box hardware blit per triangle, not one for the whole
+ * SDL_RenderGeometry call -- a single call batches many disjoint quads
+ * (e.g. every glyph in a text line, each sampling its own atlas
+ * subrect), so a single whole-batch bounding box stretched a random
+ * crop of unrelated glyphs across the entire line. tri_count
+ * MMIYOO_GeometryTextureTri entries follow this header in the
+ * allocated vertex buffer. */
+typedef struct {
     MI_GFX_Surface_t target_surface;
     SDL_bool is_target_texture;
+    int tri_count;
 } MMIYOO_GeometryTextureData;
 
 static void MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
@@ -1473,111 +1484,124 @@ static int MMIYOO_QueueGeometry(SDL_Renderer *renderer, SDL_RenderCommand *cmd, 
     }
 
     if (texture != NULL) {
-        float min_x = 0.0f;
-        float min_y = 0.0f;
-        float max_x = 0.0f;
-        float max_y = 0.0f;
-        float min_u = 0.0f;
-        float min_v = 0.0f;
-        float max_u = 1.0f;
-        float max_v = 1.0f;
         int total_r = 0;
         int total_g = 0;
         int total_b = 0;
         int total_a = 0;
-        SDL_bool first = SDL_TRUE;
+        int tri_count = count / 3;
+        MMIYOO_GeometryTextureTri *tris;
 
-        texdata = (MMIYOO_GeometryTextureData *)SDL_AllocateRenderVertices(renderer, sizeof(*texdata), 0, &cmd->data.draw.first);
+        if (tri_count < 1) {
+            return 0;
+        }
+
+        texdata = (MMIYOO_GeometryTextureData *)SDL_AllocateRenderVertices(renderer,
+                       sizeof(*texdata) + (size_t)tri_count * sizeof(MMIYOO_GeometryTextureTri),
+                       0, &cmd->data.draw.first);
         if (!texdata) {
             return -1;
         }
+        tris = (MMIYOO_GeometryTextureTri *)(texdata + 1);
 
-        for (i = 0; i < count; ++i) {
-            int j;
-            const float *xy_ptr;
-            float x;
-            float y;
+        for (i = 0; i < tri_count; ++i) {
+            int k;
+            float min_x = 0.0f, min_y = 0.0f, max_x = 0.0f, max_y = 0.0f;
+            float min_u = 0.0f, min_v = 0.0f, max_u = 1.0f, max_v = 1.0f;
+            int src_x, src_y, src_w, src_h;
+            MMIYOO_GeometryTextureTri *tri = &tris[i];
 
-            if (indices) {
-                if (size_indices == 4) {
-                    j = ((const Uint32 *)indices)[i];
-                } else if (size_indices == 2) {
-                    j = ((const Uint16 *)indices)[i];
+            for (k = 0; k < 3; ++k) {
+                int vi = i * 3 + k;
+                int j;
+                const float *xy_ptr;
+                float x, y;
+
+                if (indices) {
+                    if (size_indices == 4) {
+                        j = ((const Uint32 *)indices)[vi];
+                    } else if (size_indices == 2) {
+                        j = ((const Uint16 *)indices)[vi];
+                    } else {
+                        j = ((const Uint8 *)indices)[vi];
+                    }
                 } else {
-                    j = ((const Uint8 *)indices)[i];
+                    j = vi;
                 }
-            } else {
-                j = i;
-            }
 
-            xy_ptr = (const float *)((const char *)xy + j * xy_stride);
-            x = xy_ptr[0] * scale_x;
-            y = xy_ptr[1] * scale_y;
+                xy_ptr = (const float *)((const char *)xy + j * xy_stride);
+                x = xy_ptr[0] * scale_x;
+                y = xy_ptr[1] * scale_y;
 
-            if (first) {
-                min_x = max_x = x;
-                min_y = max_y = y;
-            } else {
-                min_x = SDL_min(min_x, x);
-                min_y = SDL_min(min_y, y);
-                max_x = SDL_max(max_x, x);
-                max_y = SDL_max(max_y, y);
-            }
-
-            if (uv) {
-                const float *uv_ptr = (const float *)((const char *)uv + j * uv_stride);
-                float u = uv_ptr[0];
-                float v = uv_ptr[1];
-                if (first) {
-                    min_u = max_u = u;
-                    min_v = max_v = v;
+                if (k == 0) {
+                    min_x = max_x = x;
+                    min_y = max_y = y;
                 } else {
-                    min_u = SDL_min(min_u, u);
-                    min_v = SDL_min(min_v, v);
-                    max_u = SDL_max(max_u, u);
-                    max_v = SDL_max(max_v, v);
+                    min_x = SDL_min(min_x, x);
+                    min_y = SDL_min(min_y, y);
+                    max_x = SDL_max(max_x, x);
+                    max_y = SDL_max(max_y, y);
+                }
+
+                if (uv) {
+                    const float *uv_ptr = (const float *)((const char *)uv + j * uv_stride);
+                    float u = uv_ptr[0];
+                    float v = uv_ptr[1];
+                    if (k == 0) {
+                        min_u = max_u = u;
+                        min_v = max_v = v;
+                    } else {
+                        min_u = SDL_min(min_u, u);
+                        min_v = SDL_min(min_v, v);
+                        max_u = SDL_max(max_u, u);
+                        max_v = SDL_max(max_v, v);
+                    }
+                }
+
+                if (color) {
+                    const SDL_Color *vertex_color = (const SDL_Color *)((const char *)color + j * color_stride);
+                    total_r += vertex_color->r;
+                    total_g += vertex_color->g;
+                    total_b += vertex_color->b;
+                    total_a += vertex_color->a;
+                } else {
+                    total_r += data->draw_color_r;
+                    total_g += data->draw_color_g;
+                    total_b += data->draw_color_b;
+                    total_a += data->draw_color_a;
                 }
             }
 
-            if (color) {
-                const SDL_Color *vertex_color = (const SDL_Color *)((const char *)color + j * color_stride);
-                total_r += vertex_color->r;
-                total_g += vertex_color->g;
-                total_b += vertex_color->b;
-                total_a += vertex_color->a;
-            } else {
-                total_r += data->draw_color_r;
-                total_g += data->draw_color_g;
-                total_b += data->draw_color_b;
-                total_a += data->draw_color_a;
+            min_u = SDL_clamp(min_u, 0.0f, 1.0f);
+            min_v = SDL_clamp(min_v, 0.0f, 1.0f);
+            max_u = SDL_clamp(max_u, 0.0f, 1.0f);
+            max_v = SDL_clamp(max_v, 0.0f, 1.0f);
+
+            src_x = SDL_max(0, (int)SDL_floorf(min_u * (float)texture->w));
+            src_y = SDL_max(0, (int)SDL_floorf(min_v * (float)texture->h));
+            src_w = SDL_max(1, (int)SDL_ceilf(max_u * (float)texture->w) - src_x);
+            src_h = SDL_max(1, (int)SDL_ceilf(max_v * (float)texture->h) - src_y);
+
+            if (src_x + src_w > texture->w) {
+                src_w = texture->w - src_x;
+            }
+            if (src_y + src_h > texture->h) {
+                src_h = texture->h - src_y;
             }
 
-            first = SDL_FALSE;
+            tri->srcrect.x = src_x;
+            tri->srcrect.y = src_y;
+            tri->srcrect.w = src_w;
+            tri->srcrect.h = src_h;
+
+            tri->dstrect.x = min_x;
+            tri->dstrect.y = min_y;
+            tri->dstrect.w = SDL_max(1.0f, max_x - min_x);
+            tri->dstrect.h = SDL_max(1.0f, max_y - min_y);
         }
 
-        if (min_u < 0.0f) min_u = 0.0f;
-        if (min_v < 0.0f) min_v = 0.0f;
-        if (max_u > 1.0f) max_u = 1.0f;
-        if (max_v > 1.0f) max_v = 1.0f;
-
-        texdata->srcrect.x = SDL_max(0, (int)SDL_floorf(min_u * (float)texture->w));
-        texdata->srcrect.y = SDL_max(0, (int)SDL_floorf(min_v * (float)texture->h));
-        texdata->srcrect.w = SDL_max(1, (int)SDL_ceilf(max_u * (float)texture->w) - texdata->srcrect.x);
-        texdata->srcrect.h = SDL_max(1, (int)SDL_ceilf(max_v * (float)texture->h) - texdata->srcrect.y);
-
-        if (texdata->srcrect.x + texdata->srcrect.w > texture->w) {
-            texdata->srcrect.w = texture->w - texdata->srcrect.x;
-        }
-        if (texdata->srcrect.y + texdata->srcrect.h > texture->h) {
-            texdata->srcrect.h = texture->h - texdata->srcrect.y;
-        }
-
-        texdata->dstrect.x = min_x;
-        texdata->dstrect.y = min_y;
-        texdata->dstrect.w = SDL_max(1.0f, max_x - min_x);
-        texdata->dstrect.h = SDL_max(1.0f, max_y - min_y);
         texdata->target_surface = data->current_target_surface;
         texdata->is_target_texture = data->is_target_texture;
+        texdata->tri_count = tri_count;
 
         cmd->data.draw.count = 1;
         cmd->data.draw.r = (Uint8)(total_r / count);
@@ -2139,9 +2163,10 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
 
     if (cmd->data.draw.texture) {
         MMIYOO_GeometryTextureData *texdata;
+        MMIYOO_GeometryTextureTri *tris;
         MI_GFX_Surface_t saved_surface;
         SDL_bool saved_is_target_texture;
-        SDL_FPoint center;
+        int t;
 
         if (count <= 0 || !vertices) {
             return;
@@ -2152,9 +2177,7 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
             MMIYOO_LOG_WARN("ProcessGeometry: textured geometry data missing");
             return;
         }
-
-        center.x = texdata->dstrect.w * 0.5f;
-        center.y = texdata->dstrect.h * 0.5f;
+        tris = (MMIYOO_GeometryTextureTri *)(texdata + 1);
 
         saved_surface = data->current_target_surface;
         saved_is_target_texture = data->is_target_texture;
@@ -2162,13 +2185,23 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
         data->current_target_surface = texdata->target_surface;
         data->is_target_texture = texdata->is_target_texture;
 
-        if (My_QueueCopy(renderer, cmd->data.draw.texture, NULL,
-                         &texdata->srcrect, &texdata->dstrect,
-                         cmd->data.draw.blend,
-                         E_MI_GFX_ROTATE_0, SDL_FLIP_NONE, center,
-                         cmd->data.draw.r, cmd->data.draw.g,
-                         cmd->data.draw.b, cmd->data.draw.a) != 0) {
-            MMIYOO_LOG_WARN("ProcessGeometry: textured geometry copy failed");
+        /* One blit per triangle -- each quad (2 triangles) samples its own
+         * atlas subrect, e.g. one glyph out of a packed font atlas. */
+        for (t = 0; t < texdata->tri_count; ++t) {
+            MMIYOO_GeometryTextureTri *tri = &tris[t];
+            SDL_FPoint center;
+
+            center.x = tri->dstrect.w * 0.5f;
+            center.y = tri->dstrect.h * 0.5f;
+
+            if (My_QueueCopy(renderer, cmd->data.draw.texture, NULL,
+                             &tri->srcrect, &tri->dstrect,
+                             cmd->data.draw.blend,
+                             E_MI_GFX_ROTATE_0, SDL_FLIP_NONE, center,
+                             cmd->data.draw.r, cmd->data.draw.g,
+                             cmd->data.draw.b, cmd->data.draw.a) != 0) {
+                MMIYOO_LOG_WARN("ProcessGeometry: textured triangle copy failed");
+            }
         }
 
         data->current_target_surface = saved_surface;
