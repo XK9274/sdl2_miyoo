@@ -35,6 +35,7 @@
 #include <arm_neon.h>
 #endif
 
+#include "SDL_assert.h"
 #include "SDL_hints.h"
 #include "SDL_log.h"
 #include "SDL_stdinc.h"
@@ -74,7 +75,51 @@ typedef struct MMIYOO_TextureData {
     MI_GFX_Surface_t gfx_surface;
     MI_GFX_ColorFmt_e mi_format;
     Uint32 bytes_per_pixel;
+    /* Actual MI_SYS_MMA_Alloc/Mmap size backing this texture -- may be >=
+     * size when this texture reused a pooled block. MI_SYS_Munmap must
+     * always be called with this, never with the (possibly smaller)
+     * logical size above. */
+    unsigned int alloc_size;
 } MMIYOO_TextureData;
+
+/* Bounded, size-bucketed reuse pool for MI_SYS_MMA texture memory blocks.
+ * The MMA heap is a small, fixed reserved region (confirmed ~20.75MB via
+ * /proc/cmdline's mma_heap=...,sz=0x1500000) shared with the rest of the
+ * system; every MMIYOO_CreateTexture/DestroyTexture pair was previously a
+ * fresh MI_SYS_MMA_Alloc/Free round-trip with zero reuse, a classic
+ * fragmentation pattern for a small reserved-memory allocator. Freed
+ * blocks are cached here instead of freed immediately, and reused by a
+ * later CreateTexture of a compatible size. Strictly a release valve: hard
+ * count/byte caps mean it can never itself become a new exhaustion source
+ * -- worst case (caps hit, or disabled via hint) behaves exactly like no
+ * pool at all. GFX_FlushTextureFences() (already called unconditionally in
+ * MMIYOO_DestroyTexture before a block reaches this pool) is a *global*
+ * fence drain, so a cached block is always already safe to reuse -- no
+ * additional per-block synchronization is needed. */
+typedef struct {
+    MI_PHY phyAddr;
+    void *virAddr;
+    unsigned int alloc_size;
+} MMIYOO_PooledBlock;
+
+#define MMIYOO_TEXTURE_POOL_MAX_ENTRIES 24
+#define MMIYOO_TEXTURE_POOL_DEFAULT_MAX_BYTES (2u * 1024u * 1024u)
+/* Reject a candidate block if satisfying the request would waste more than
+ * this fraction of it, so the pool can't permanently pin oversized blocks
+ * against tiny requests. */
+#define MMIYOO_TEXTURE_POOL_SLACK_MUL 2
+
+static SDL_SpinLock mmiyoo_texture_pool_lock = 0;
+static MMIYOO_PooledBlock mmiyoo_texture_pool[MMIYOO_TEXTURE_POOL_MAX_ENTRIES];
+static int mmiyoo_texture_pool_count = 0;
+static unsigned int mmiyoo_texture_pool_bytes = 0;
+static unsigned int mmiyoo_texture_pool_max_bytes = MMIYOO_TEXTURE_POOL_DEFAULT_MAX_BYTES;
+static SDL_bool mmiyoo_texture_pool_enabled = SDL_TRUE;
+
+static unsigned int mmiyoo_pool_hits = 0;
+static unsigned int mmiyoo_pool_misses = 0;
+static unsigned int mmiyoo_pool_evictions = 0;
+static unsigned int mmiyoo_pool_drains = 0;
 
 struct MMIYOO_RenderData {
     SDL_Texture *boundTarget;
@@ -1165,6 +1210,110 @@ static MI_GFX_ColorFmt_e sdl_to_mi_gfx_format(Uint32 sdl_format, int *bits_per_p
     }
 }
 
+/* Best-fit scan: smallest cached block with alloc_size >= requested_size,
+ * rejecting anything that would waste more than MMIYOO_TEXTURE_POOL_SLACK_MUL
+ * times the request. Swap-remove on hit (order doesn't matter -- bounded,
+ * not LRU-sensitive). */
+static SDL_bool
+mmiyoo_pool_try_acquire(unsigned int requested_size, MI_PHY *out_phy, void **out_vir,
+                         unsigned int *out_alloc_size)
+{
+    int i;
+    int best = -1;
+    SDL_bool found;
+
+    SDL_AtomicLock(&mmiyoo_texture_pool_lock);
+
+    for (i = 0; i < mmiyoo_texture_pool_count; ++i) {
+        unsigned int candidate = mmiyoo_texture_pool[i].alloc_size;
+        if (candidate >= requested_size && candidate <= requested_size * MMIYOO_TEXTURE_POOL_SLACK_MUL) {
+            if (best < 0 || candidate < mmiyoo_texture_pool[best].alloc_size) {
+                best = i;
+            }
+        }
+    }
+
+    found = (best >= 0);
+    if (found) {
+        *out_phy = mmiyoo_texture_pool[best].phyAddr;
+        *out_vir = mmiyoo_texture_pool[best].virAddr;
+        *out_alloc_size = mmiyoo_texture_pool[best].alloc_size;
+
+        mmiyoo_texture_pool_bytes -= mmiyoo_texture_pool[best].alloc_size;
+        mmiyoo_texture_pool[best] = mmiyoo_texture_pool[mmiyoo_texture_pool_count - 1];
+        --mmiyoo_texture_pool_count;
+    }
+
+    SDL_AtomicUnlock(&mmiyoo_texture_pool_lock);
+    return found;
+}
+
+/* Called from MMIYOO_DestroyTexture instead of an immediate Munmap+MMA_Free.
+ * Caches the block if there's room under both caps; otherwise frees it for
+ * real immediately (identical to the pre-pooling behavior). The caller must
+ * already have flushed any GFX fences touching this block (MMIYOO_DestroyTexture
+ * already does this unconditionally before calling this). */
+static void
+mmiyoo_pool_release_or_free(MI_PHY phyAddr, void *virAddr, unsigned int alloc_size)
+{
+    SDL_bool cached = SDL_FALSE;
+
+    SDL_AtomicLock(&mmiyoo_texture_pool_lock);
+
+    if (mmiyoo_texture_pool_enabled &&
+        mmiyoo_texture_pool_count < MMIYOO_TEXTURE_POOL_MAX_ENTRIES &&
+        mmiyoo_texture_pool_bytes + alloc_size <= mmiyoo_texture_pool_max_bytes) {
+        mmiyoo_texture_pool[mmiyoo_texture_pool_count].phyAddr = phyAddr;
+        mmiyoo_texture_pool[mmiyoo_texture_pool_count].virAddr = virAddr;
+        mmiyoo_texture_pool[mmiyoo_texture_pool_count].alloc_size = alloc_size;
+        ++mmiyoo_texture_pool_count;
+        mmiyoo_texture_pool_bytes += alloc_size;
+        cached = SDL_TRUE;
+    } else {
+        ++mmiyoo_pool_evictions;
+    }
+
+    SDL_AtomicUnlock(&mmiyoo_texture_pool_lock);
+
+    if (!cached) {
+        if (virAddr) {
+            MI_SYS_Munmap(virAddr, alloc_size);
+        }
+        if (phyAddr) {
+            MI_SYS_MMA_Free(phyAddr);
+        }
+    }
+}
+
+/* Really frees every cached block. Used at renderer teardown and as a
+ * one-shot release valve right before MMIYOO_CreateTexture would otherwise
+ * report OOM. */
+static void
+mmiyoo_pool_drain(void)
+{
+    int i;
+    int count;
+    MMIYOO_PooledBlock local[MMIYOO_TEXTURE_POOL_MAX_ENTRIES];
+
+    SDL_AtomicLock(&mmiyoo_texture_pool_lock);
+    count = mmiyoo_texture_pool_count;
+    for (i = 0; i < count; ++i) {
+        local[i] = mmiyoo_texture_pool[i];
+    }
+    mmiyoo_texture_pool_count = 0;
+    mmiyoo_texture_pool_bytes = 0;
+    SDL_AtomicUnlock(&mmiyoo_texture_pool_lock);
+
+    for (i = 0; i < count; ++i) {
+        if (local[i].virAddr) {
+            MI_SYS_Munmap(local[i].virAddr, local[i].alloc_size);
+        }
+        if (local[i].phyAddr) {
+            MI_SYS_MMA_Free(local[i].phyAddr);
+        }
+    }
+}
+
 static int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 {
     MMIYOO_TextureData *mmiyoo_texture;
@@ -1210,23 +1359,45 @@ static int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
         
     mmiyoo_texture->uses_msys_memory = SDL_TRUE;
 
-    if (MI_SYS_MMA_Alloc(NULL, mmiyoo_texture->size, &mmiyoo_texture->phyAddr) != MI_SUCCESS) {
-        printf("ERROR: MI_SYS_MMA_Alloc FAILED size=%u (%ux%u %s) live=%d\n",
-               mmiyoo_texture->size, mmiyoo_texture->width, mmiyoo_texture->height,
-               format_name, mmiyoo_texture_live_count);
-        fflush(stdout);
-        SDL_free(mmiyoo_texture);
-        return SDL_OutOfMemory();
-    }
+    if (mmiyoo_texture_pool_enabled &&
+        mmiyoo_pool_try_acquire(mmiyoo_texture->size, &mmiyoo_texture->phyAddr,
+                                 &mmiyoo_texture->virAddr, &mmiyoo_texture->alloc_size)) {
+        SDL_assert(mmiyoo_texture->alloc_size >= mmiyoo_texture->size);
+        ++mmiyoo_pool_hits;
+        MMIYOO_VERBOSE_LOG("CreateTexture: pool HIT size=%u alloc_size=%u (hits=%u misses=%u)",
+                            mmiyoo_texture->size, mmiyoo_texture->alloc_size,
+                            mmiyoo_pool_hits, mmiyoo_pool_misses);
+    } else {
+        ++mmiyoo_pool_misses;
 
-    if (MI_SYS_Mmap(mmiyoo_texture->phyAddr, mmiyoo_texture->size, &mmiyoo_texture->virAddr, TRUE) != MI_SUCCESS) {
-        printf("ERROR: MI_SYS_Mmap FAILED phyAddr=0x%llx size=%u (%ux%u %s) live=%d\n",
-               (unsigned long long)mmiyoo_texture->phyAddr, mmiyoo_texture->size,
-               mmiyoo_texture->width, mmiyoo_texture->height, format_name, mmiyoo_texture_live_count);
-        fflush(stdout);
-        MI_SYS_MMA_Free(mmiyoo_texture->phyAddr);
-        SDL_free(mmiyoo_texture);
-        return SDL_OutOfMemory();
+        if (MI_SYS_MMA_Alloc(NULL, mmiyoo_texture->size, &mmiyoo_texture->phyAddr) != MI_SUCCESS) {
+            if (mmiyoo_texture_pool_enabled && mmiyoo_texture_pool_count > 0) {
+                ++mmiyoo_pool_drains;
+                mmiyoo_pool_drain();
+                MMIYOO_VERBOSE_LOG("CreateTexture: alloc failed, drained pool, retrying size=%u",
+                                    mmiyoo_texture->size);
+            }
+            if (MI_SYS_MMA_Alloc(NULL, mmiyoo_texture->size, &mmiyoo_texture->phyAddr) != MI_SUCCESS) {
+                printf("ERROR: MI_SYS_MMA_Alloc FAILED size=%u (%ux%u %s) live=%d\n",
+                       mmiyoo_texture->size, mmiyoo_texture->width, mmiyoo_texture->height,
+                       format_name, mmiyoo_texture_live_count);
+                fflush(stdout);
+                SDL_free(mmiyoo_texture);
+                return SDL_OutOfMemory();
+            }
+        }
+
+        mmiyoo_texture->alloc_size = mmiyoo_texture->size;
+
+        if (MI_SYS_Mmap(mmiyoo_texture->phyAddr, mmiyoo_texture->size, &mmiyoo_texture->virAddr, TRUE) != MI_SUCCESS) {
+            printf("ERROR: MI_SYS_Mmap FAILED phyAddr=0x%llx size=%u (%ux%u %s) live=%d\n",
+                   (unsigned long long)mmiyoo_texture->phyAddr, mmiyoo_texture->size,
+                   mmiyoo_texture->width, mmiyoo_texture->height, format_name, mmiyoo_texture_live_count);
+            fflush(stdout);
+            MI_SYS_MMA_Free(mmiyoo_texture->phyAddr);
+            SDL_free(mmiyoo_texture);
+            return SDL_OutOfMemory();
+        }
     }
 
     mmiyoo_texture->data = mmiyoo_texture->virAddr;
@@ -2593,12 +2764,9 @@ static void MMIYOO_DestroyTexture(SDL_Renderer *renderer, SDL_Texture *texture)
                allocation. */
             GFX_FlushTextureFences();
 
-            if (mmiyoo_texture->virAddr) {
-                MI_SYS_Munmap(mmiyoo_texture->virAddr, mmiyoo_texture->size);
-            }
-
             if (mmiyoo_texture->phyAddr) {
-                MI_SYS_MMA_Free(mmiyoo_texture->phyAddr);
+                mmiyoo_pool_release_or_free(mmiyoo_texture->phyAddr, mmiyoo_texture->virAddr,
+                                             mmiyoo_texture->alloc_size);
             }
         } else if (mmiyoo_texture->virAddr) {
             SDL_free(mmiyoo_texture->virAddr);
@@ -2622,6 +2790,10 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
         }
         SDL_free(data);
     }
+
+    /* Never leave cached MMA blocks dangling past renderer teardown. */
+    mmiyoo_pool_drain();
+
     SDL_free(renderer);
 }
 
@@ -2715,6 +2887,23 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         const char *timing_hint = SDL_GetHint("SDL_MMIYOO_FRAME_TIMING");
         if (timing_hint && SDL_atoi(timing_hint) != 0) {
             data->collect_frame_timing = SDL_TRUE;
+        }
+    }
+
+    {
+        const char *pool_hint = SDL_GetHint("SDL_MMIYOO_TEXTURE_POOL");
+        if (pool_hint) {
+            mmiyoo_texture_pool_enabled = (SDL_atoi(pool_hint) != 0) ? SDL_TRUE : SDL_FALSE;
+        }
+    }
+
+    {
+        const char *pool_bytes_hint = SDL_GetHint("SDL_MMIYOO_TEXTURE_POOL_MAX_BYTES");
+        if (pool_bytes_hint) {
+            int v = SDL_atoi(pool_bytes_hint);
+            if (v > 0) {
+                mmiyoo_texture_pool_max_bytes = (unsigned int)v;
+            }
         }
     }
 
