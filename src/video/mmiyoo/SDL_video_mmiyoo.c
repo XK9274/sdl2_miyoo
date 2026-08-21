@@ -831,13 +831,14 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 
         memset(&src_surf, 0, sizeof(src_surf));
         src_surf.phyAddr = gfx.back.phyAddr;
-        src_surf.eColorFmt = E_MI_GFX_FMT_ARGB8888;
+        src_surf.eColorFmt = gfx.back_buffer_is_gles_rgba ? E_MI_GFX_FMT_ABGR8888 : E_MI_GFX_FMT_ARGB8888;
         src_surf.u32Width = GFX_GetFrameWidth();
         src_surf.u32Height = GFX_GetFrameHeight();
         src_surf.u32Stride = GFX_GetFrameStride();
 
         dst_surf = src_surf;
         dst_surf.phyAddr = gfx.fb.phyAddr;
+        dst_surf.eColorFmt = E_MI_GFX_FMT_ARGB8888;
 
         memset(&src_rect, 0, sizeof(src_rect));
         src_rect.u32Width = src_surf.u32Width;
@@ -866,6 +867,13 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 #endif
 }
 
+void GFX_SetBackBufferGLESFormat(SDL_bool is_gles_rgba)
+{
+#ifdef MMIYOO
+    gfx.back_buffer_is_gles_rgba = is_gles_rgba;
+#endif
+}
+
 void *GFX_GetFrameBufferVirtual(void)
 {
 #ifdef MMIYOO
@@ -875,6 +883,24 @@ void *GFX_GetFrameBufferVirtual(void)
     return gfx.fb.virAddr;
 #else
     return NULL;
+#endif
+}
+
+void *GFX_GetOverlayVirtual(void)
+{
+#ifdef MMIYOO
+    return gfx.overlay.virAddr;
+#else
+    return NULL;
+#endif
+}
+
+MI_PHY GFX_GetOverlayPhysical(void)
+{
+#ifdef MMIYOO
+    return gfx.overlay.phyAddr;
+#else
+    return 0;
 #endif
 }
 

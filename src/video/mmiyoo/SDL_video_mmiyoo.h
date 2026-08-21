@@ -94,8 +94,15 @@ typedef struct _GFX {
     /* Present strategy: real FBIOPAN_DISPLAY flip vs the fenced BitBlit copy. */
     SDL_bool page_flip_enabled;
     int page_flip_index;
+
+    /* SDL_TRUE once a GLES windowsurface-mode context has written into
+     * gfx.back directly (see SDL_opengles_mmiyoo.c) -- its memory byte order
+     * is GL's RGBA8888, which MI_GFX calls ABGR8888, not the ARGB8888 our
+     * own SW blits use. Unused in pbuffer mode (the default). */
+    SDL_bool back_buffer_is_gles_rgba;
 } GFX;
 
+void GFX_SetBackBufferGLESFormat(SDL_bool is_gles_rgba);
 void FB_Clear(void);
 void GFX_FlushTextureFences(void);
 void GFX_AddTextureFence(MI_U16 fence);
@@ -126,6 +133,8 @@ MI_U32 GFX_GetFrameHeight(void);
 SDL_bool GFX_IsPageFlipEnabled(void);
 void GFX_SwapBuffers(SDL_bool wait_for_vsync);
 void *GFX_GetFrameBufferVirtual(void);
+void *GFX_GetOverlayVirtual(void);
+MI_PHY GFX_GetOverlayPhysical(void);
 
 int FB_Init(void);
 int FB_Uninit(void);
