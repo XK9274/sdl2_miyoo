@@ -61,6 +61,13 @@ Build options
 | `--verbose` | off | Enable shell trace output with `set -x` |
 | `--help` / `-h` | off | Show script help |
 
+Runtime environment variables
+------------------------------
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SDL_MMIYOO_GLES_PRESENT_MODE` | `pbuffer` | GLES present strategy, builds with `--enable-gles` only. `pbuffer`: colour-correct, renders offscreen and hardware-blits to present. `windowsurface`: real EGL window surface via a vendor present extension -- kept for comparison only, has known colour corruption in translucent UI regions. See `docs/MMIYOO_SDL_FEATURE_SUMMARY.md`. |
+
 Acknowledgements
 ----------------
 

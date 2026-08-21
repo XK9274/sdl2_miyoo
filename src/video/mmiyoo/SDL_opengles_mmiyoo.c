@@ -27,16 +27,63 @@
 
 #include "SDL_video_mmiyoo.h"
 #include "SDL_opengles_mmiyoo.h"
+#include <GLES2/gl2.h>
 
-typedef EGLBoolean (EGLAPIENTRY *PFNEGLUPDATEBUFFERSETTINGSPROC)(EGLDisplay, EGLSurface, void *, void *, void *);
+/* GL render target size, in lockstep with RetroArch's own
+ * video_fullscreen_x/y in retroarch.cfg -- they must match exactly, or RA
+ * lays out its UI for a canvas size that doesn't match what we actually
+ * give it (the "quarter screen" bug: RA rendered crisply at 320x240 while
+ * believing the target was 640x480). Currently full real panel resolution
+ * -- no hardware scale-up needed (srcrect == dstrect in glSwapWindow), at
+ * the cost of SwiftShader software-rendering the full panel every frame.
+ * Drop to a smaller size (e.g. 320x240, an exact 2x-downscale of this
+ * panel) to trade render cost for a clean integer hardware upscale on
+ * present if full-res proves too slow again -- same shape every
+ * offscreen-FBO suite in miyoo_sdl2_benchmarks already uses. */
+#define MMIYOO_GLES_RENDER_WIDTH  640
+#define MMIYOO_GLES_RENDER_HEIGHT 480
 
-static PFNEGLUPDATEBUFFERSETTINGSPROC p_eglUpdateBufferSettings = NULL;
+/* Two present strategies, selected via SDL_MMIYOO_GLES_PRESENT_MODE:
+ *   "pbuffer" (default) -- render into an EGL PBuffer, glReadPixels() into
+ *     gfx.overlay, hardware-blit that to the panel. Colour-correct, but
+ *     still bound by SwiftShader's software-rasterizer performance ceiling.
+ *   "windowsurface" -- a real EGL WindowSurface, presented through the
+ *     vendor eglUpdateBufferSettings extension into gfx.back. Kept for
+ *     comparison/regression testing only: known to still produce colour
+ *     corruption (green patches) in translucent UI regions, root cause not
+ *     found -- see TODO. */
+typedef enum {
+    MMIYOO_GLES_PRESENT_PBUFFER = 0,
+    MMIYOO_GLES_PRESENT_WINDOWSURFACE
+} MMIYOO_GLESPresentMode_e;
+
+static MMIYOO_GLESPresentMode_e g_present_mode = MMIYOO_GLES_PRESENT_PBUFFER;
+static SDL_bool g_present_mode_resolved = SDL_FALSE;
+
+static MMIYOO_GLESPresentMode_e
+MMIYOO_GLES_ResolvePresentMode(void)
+{
+    if (!g_present_mode_resolved) {
+        const char *env = SDL_getenv("SDL_MMIYOO_GLES_PRESENT_MODE");
+        g_present_mode = (env && SDL_strcasecmp(env, "windowsurface") == 0)
+                          ? MMIYOO_GLES_PRESENT_WINDOWSURFACE
+                          : MMIYOO_GLES_PRESENT_PBUFFER;
+        g_present_mode_resolved = SDL_TRUE;
+    }
+    return g_present_mode;
+}
+
+/* windowsurface mode only, below: exported by the vendor libEGL.so but not
+ * registered in its eglGetProcAddress extension table, so it must be linked
+ * directly rather than looked up at runtime -- eglGetProcAddress
+ * ("eglUpdateBufferSettings") reliably returns NULL on-device even though
+ * the symbol is present in the .so. */
+extern EGLBoolean eglUpdateBufferSettings(EGLDisplay display, EGLSurface surface, void *pFunc, void *fb_idx, void *fb_vaddr);
+
 static void *ppFunc = NULL;
 static void *pfb_idx = NULL;
 static void *pfb_vaddr = NULL;
 static SDL_bool g_gles_wait_for_vsync = SDL_TRUE;
-
-// EGLBoolean eglUpdateBufferSettings(EGLDisplay display, EGLSurface surface, void *pFunc, void *fb_idx, void *fb_vaddr);
 
 static void MMIYOO_GLES_Flip(void)
 {
@@ -49,7 +96,7 @@ MMIYOO_GLES_UpdateBufferSettings(_THIS)
     SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
     void *fb_vaddr;
 
-    if (!gl_data || !p_eglUpdateBufferSettings ||
+    if (!gl_data ||
         gl_data->display == EGL_NO_DISPLAY || gl_data->surface == EGL_NO_SURFACE) {
         return SDL_FALSE;
     }
@@ -70,7 +117,7 @@ MMIYOO_GLES_UpdateBufferSettings(_THIS)
     gl_data->fb_vaddr[0] = (unsigned long)fb_vaddr;
     gl_data->fb_vaddr[1] = (unsigned long)fb_vaddr;
 
-    if (p_eglUpdateBufferSettings(gl_data->display, gl_data->surface,
+    if (eglUpdateBufferSettings(gl_data->display, gl_data->surface,
                                   (void *)MMIYOO_GLES_Flip,
                                   &gl_data->fb_idx,
                                   gl_data->fb_vaddr) != EGL_TRUE) {
@@ -81,6 +128,7 @@ MMIYOO_GLES_UpdateBufferSettings(_THIS)
         return SDL_FALSE;
     }
 
+    GFX_SetBackBufferGLESFormat(SDL_TRUE);
     gl_data->buffer_settings_attached = SDL_TRUE;
     gl_data->owns_buffer_settings = SDL_TRUE;
     return SDL_TRUE;
@@ -103,12 +151,6 @@ MMIYOO_GLES_DefaultProfileConfig(_THIS, int *mask, int *major, int *minor)
 int glLoadLibrary(_THIS, const char *name)
 {
     (void)name; /* GLES library is provided by the platform. */
-
-    /* Cache optional extension entry points we care about. */
-    if (!p_eglUpdateBufferSettings) {
-        p_eglUpdateBufferSettings = (PFNEGLUPDATEBUFFERSETTINGSPROC)eglGetProcAddress("eglUpdateBufferSettings");
-    }
-
     return 0;
 }
 
@@ -134,11 +176,13 @@ void glUnloadLibrary(_THIS)
     gl_data->config = NULL;
     gl_data->buffer_settings_attached = SDL_FALSE;
     gl_data->owns_buffer_settings = SDL_FALSE;
+    GFX_SetBackBufferGLESFormat(SDL_FALSE);
 }
 
 SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
 {
     SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
+    MMIYOO_GLESPresentMode_e present_mode = MMIYOO_GLES_ResolvePresentMode();
     EGLDisplay display;
     EGLContext context;
     EGLSurface surface;
@@ -146,6 +190,7 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
     EGLint minor = 0;
     EGLint num_configs = 0;
     EGLConfig config = NULL;
+    EGLint surface_type_bit = (present_mode == MMIYOO_GLES_PRESENT_PBUFFER) ? EGL_PBUFFER_BIT : EGL_WINDOW_BIT;
 
     (void)window; /* Miyoo does not expose native window handles. */
 
@@ -173,10 +218,6 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
             return NULL;
         }
 
-        if (!p_eglUpdateBufferSettings) {
-            p_eglUpdateBufferSettings = (PFNEGLUPDATEBUFFERSETTINGSPROC)eglGetProcAddress("eglUpdateBufferSettings");
-        }
-
         gl_data->display = display;
     }
 
@@ -185,24 +226,31 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
         EGLint attribs[32];
         int idx = 0;
 
-    attribs[idx++] = EGL_RED_SIZE;
-    attribs[idx++] = (_this->gl_config.red_size > 0) ? _this->gl_config.red_size : 8;
-    attribs[idx++] = EGL_GREEN_SIZE;
-    attribs[idx++] = (_this->gl_config.green_size > 0) ? _this->gl_config.green_size : 8;
-    attribs[idx++] = EGL_BLUE_SIZE;
-    attribs[idx++] = (_this->gl_config.blue_size > 0) ? _this->gl_config.blue_size : 8;
-    attribs[idx++] = EGL_ALPHA_SIZE;
-    attribs[idx++] = (_this->gl_config.alpha_size > 0) ? _this->gl_config.alpha_size : 0;
-    attribs[idx++] = EGL_DEPTH_SIZE;
-    attribs[idx++] = (_this->gl_config.depth_size > 0) ? _this->gl_config.depth_size : 16;
-    attribs[idx++] = EGL_STENCIL_SIZE;
-    attribs[idx++] = (_this->gl_config.stencil_size > 0) ? _this->gl_config.stencil_size : 0;
-    attribs[idx++] = EGL_SURFACE_TYPE;
-    attribs[idx++] = EGL_WINDOW_BIT;
-    attribs[idx++] = EGL_RENDERABLE_TYPE;
-    attribs[idx++] = EGL_OPENGL_ES2_BIT;
-    attribs[idx++] = EGL_COLOR_BUFFER_TYPE;
-    attribs[idx++] = EGL_RGB_BUFFER;
+        attribs[idx++] = EGL_RED_SIZE;
+        attribs[idx++] = (_this->gl_config.red_size > 0) ? _this->gl_config.red_size : 8;
+        attribs[idx++] = EGL_GREEN_SIZE;
+        attribs[idx++] = (_this->gl_config.green_size > 0) ? _this->gl_config.green_size : 8;
+        attribs[idx++] = EGL_BLUE_SIZE;
+        attribs[idx++] = (_this->gl_config.blue_size > 0) ? _this->gl_config.blue_size : 8;
+        /* windowsurface mode always requests a real alpha channel, ignoring
+         * gl_config: the present-copy it uses hardcodes 32bpp for the
+         * surface it reads back from, and an alpha_size=0 request lets the
+         * vendor EGL pick a packed 24bpp config instead, corrupting every
+         * present. pbuffer mode doesn't care either way. */
+        attribs[idx++] = EGL_ALPHA_SIZE;
+        attribs[idx++] = (present_mode == MMIYOO_GLES_PRESENT_WINDOWSURFACE)
+                          ? 8
+                          : ((_this->gl_config.alpha_size > 0) ? _this->gl_config.alpha_size : 0);
+        attribs[idx++] = EGL_DEPTH_SIZE;
+        attribs[idx++] = (_this->gl_config.depth_size > 0) ? _this->gl_config.depth_size : 16;
+        attribs[idx++] = EGL_STENCIL_SIZE;
+        attribs[idx++] = (_this->gl_config.stencil_size > 0) ? _this->gl_config.stencil_size : 0;
+        attribs[idx++] = EGL_SURFACE_TYPE;
+        attribs[idx++] = surface_type_bit;
+        attribs[idx++] = EGL_RENDERABLE_TYPE;
+        attribs[idx++] = EGL_OPENGL_ES2_BIT;
+        attribs[idx++] = EGL_COLOR_BUFFER_TYPE;
+        attribs[idx++] = EGL_RGB_BUFFER;
 
         if (_this->gl_config.multisamplebuffers) {
             attribs[idx++] = EGL_SAMPLE_BUFFERS;
@@ -216,7 +264,7 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
         if (eglChooseConfig(display, attribs, &config, 1, &num_configs) != EGL_TRUE) {
             const EGLint alt_attribs[] = {
                 EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-                EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                EGL_SURFACE_TYPE, surface_type_bit,
                 EGL_NONE
             };
             EGLint alt_configs = 0;
@@ -244,7 +292,30 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
         }
     }
 
-    {
+    if (present_mode == MMIYOO_GLES_PRESENT_PBUFFER) {
+        /* A real WindowSurface drives SwiftShader's FrameBufferMMiyoo present
+         * path (WindowSurface::swap() -> blit() -> copyRoutine()'s
+         * Reactor-JIT blit), which segfaults inside libGLESv2.so on the
+         * first-ever eglSwapBuffers() call, on-screen, unconditionally --
+         * confirmed via an isolated minimal reproducer independent of
+         * RetroArch or this driver's own present code. A PBuffer surface
+         * never touches that code path at all: same pattern every
+         * offscreen-FBO GL suite in miyoo_sdl2_benchmarks already uses.
+         * glSwapWindow() below reads pixels back manually instead of
+         * calling eglSwapBuffers(). */
+        const EGLint surface_attribs[] = {
+            EGL_WIDTH, MMIYOO_GLES_RENDER_WIDTH,
+            EGL_HEIGHT, MMIYOO_GLES_RENDER_HEIGHT,
+            EGL_NONE
+        };
+
+        surface = eglCreatePbufferSurface(display, config, surface_attribs);
+        if (surface == EGL_NO_SURFACE) {
+            SDL_SetError("MMIYOO: eglCreatePbufferSurface failed (0x%04x)", eglGetError());
+            eglDestroyContext(display, context);
+            return NULL;
+        }
+    } else {
         const EGLint surface_attribs[] = {
             EGL_RENDER_BUFFER, EGL_BACK_BUFFER,
             EGL_NONE
@@ -269,15 +340,18 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
     gl_data->surface = surface;
     gl_data->swap_interval = 1;
 
-    if (p_eglUpdateBufferSettings) {
-        if (ppFunc && pfb_idx && pfb_vaddr) {
-            if (p_eglUpdateBufferSettings(display, surface, ppFunc, pfb_idx, pfb_vaddr) == EGL_TRUE) {
-                gl_data->buffer_settings_attached = SDL_TRUE;
-                gl_data->owns_buffer_settings = SDL_FALSE;
-            }
-        } else {
-            MMIYOO_GLES_UpdateBufferSettings(_this);
+    if (present_mode == MMIYOO_GLES_PRESENT_PBUFFER) {
+        /* No eglUpdateBufferSettings() here: that vendor extension is a
+         * WindowSurface-only present hook, and this context uses a PBuffer
+         * surface specifically to avoid that present path. See
+         * glSwapWindow(). */
+    } else if (ppFunc && pfb_idx && pfb_vaddr) {
+        if (eglUpdateBufferSettings(display, surface, ppFunc, pfb_idx, pfb_vaddr) == EGL_TRUE) {
+            gl_data->buffer_settings_attached = SDL_TRUE;
+            gl_data->owns_buffer_settings = SDL_FALSE;
         }
+    } else {
+        MMIYOO_GLES_UpdateBufferSettings(_this);
     }
 
     return context;
@@ -317,6 +391,78 @@ int glUpdateBufferSettings(void *pFunc, void *fb_idx, void *fb_vaddr)
     return 0;
 }
 
+static int
+MMIYOO_GLES_SwapWindow_PBuffer(_THIS)
+{
+    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
+    Uint8 *overlay_virt;
+    MI_PHY overlay_phy;
+    SDL_Rect srcrect, dstrect;
+    int pitch;
+
+    overlay_virt = (Uint8 *)GFX_GetOverlayVirtual();
+    overlay_phy = GFX_GetOverlayPhysical();
+    if (!overlay_virt || !overlay_phy) {
+        return SDL_SetError("MMIYOO: no overlay buffer to read GL pixels into");
+    }
+
+    pitch = MMIYOO_GLES_RENDER_WIDTH * 4;
+
+    /* No CPU copy anywhere in this path: glReadPixels() writes directly
+     * into gfx.overlay (MI_SYS-allocated, physical address already valid
+     * for MI_GFX_BitBlit -- see GFX_GetOverlayVirtual/Physical), and
+     * MI_GFX_BitBlit below both hardware-scales AND corrects orientation
+     * in one DMA-driven blit. No neon_memcpy, no SDL_memcpy, no per-row
+     * loop of any kind. */
+    glReadPixels(0, 0, MMIYOO_GLES_RENDER_WIDTH, MMIYOO_GLES_RENDER_HEIGHT,
+                 GL_RGBA, GL_UNSIGNED_BYTE, overlay_virt);
+
+    srcrect.x = 0;
+    srcrect.y = 0;
+    srcrect.w = MMIYOO_GLES_RENDER_WIDTH;
+    srcrect.h = MMIYOO_GLES_RENDER_HEIGHT;
+
+    /* Hardware-scaled present: source is the small render, destination is
+     * the full real panel -- MI_GFX_BitBlit does the upscale. 640/320 and
+     * 480/240 are both exact 2x, so this is a clean integer scale. */
+    dstrect.x = 0;
+    dstrect.y = 0;
+    dstrect.w = (int)GFX_GetFrameWidth();
+    dstrect.h = (int)GFX_GetFrameHeight();
+
+    /* glReadPixels(GL_RGBA) byte order R,G,B,A in memory is
+     * E_MI_GFX_FMT_ABGR8888 by MI_GFX's naming (first-named channel =
+     * highest byte) -- same mapping SDL_PIXELFORMAT_ABGR8888 uses.
+     *
+     * MIRROR_HORIZONTAL, not a CPU row-flip + ROTATE_180: composing the
+     * panel's required ROTATE_180 (see My_QueueCopy's
+     * `base_rotation = is_target_texture ? ROTATE_0 : ROTATE_180`) with
+     * glReadPixels' inherent bottom-up row order algebraically cancels the
+     * Y component, leaving a pure X-flip. Doing that flip in MI_GFX
+     * instead of on the CPU removes the last CPU-side pixel touch from
+     * this path entirely -- MI_GFX_BitBlit (DMA-driven hardware blit) does
+     * 100% of the pixel movement now. */
+    if (GFX_Copy(overlay_virt, overlay_phy, srcrect, dstrect, pitch,
+                 E_MI_GFX_ROTATE_0, E_MI_GFX_MIRROR_HORIZONTAL, SDL_BLENDMODE_NONE,
+                 NULL, NULL, SDL_FALSE,
+                 0, E_MI_GFX_FMT_ABGR8888, 4,
+                 255, 255, 255, 255) != 0) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "MMIYOO GLES: GFX_Copy present blit failed");
+    }
+
+    /* MI_GFX_BitBlit is asynchronous (fire-and-forget with a fence) and
+     * gfx.overlay is a single shared buffer, not double-buffered -- without
+     * waiting here, next frame's glReadPixels() can start overwriting it
+     * while this frame's hardware blit is still reading from it, producing
+     * exactly the kind of torn/flickering frame this caused before this
+     * flush was added. */
+    GFX_FlushTextureFences();
+
+    GFX_SwapBuffers(gl_data->swap_interval != 0);
+
+    return 0;
+}
+
 int glSwapWindow(_THIS, SDL_Window *window)
 {
     SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
@@ -324,6 +470,10 @@ int glSwapWindow(_THIS, SDL_Window *window)
 
     if (!gl_data || gl_data->display == EGL_NO_DISPLAY || gl_data->surface == EGL_NO_SURFACE) {
         return SDL_SetError("MMIYOO: no EGL surface to swap");
+    }
+
+    if (MMIYOO_GLES_ResolvePresentMode() == MMIYOO_GLES_PRESENT_PBUFFER) {
+        return MMIYOO_GLES_SwapWindow_PBuffer(_this);
     }
 
     if (eglSwapBuffers(gl_data->display, gl_data->surface) != EGL_TRUE) {

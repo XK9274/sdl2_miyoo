@@ -49,6 +49,7 @@ Texture fence batching: `GFX_FlushTextureFences`, `GFX_AddTextureFence`
 Framebuffer/page-flip accessors: `GFX_GetFrameBuffer`, `GFX_GetFrameBufferVirtual`, `GFX_GetFrameStride`, `GFX_GetFrameWidth`, `GFX_GetFrameHeight`, `GFX_IsPageFlipEnabled`
 GLES default profile config: `MMIYOO_GLES_DefaultProfileConfig`
 GLES buffer-settings extension hook: `glUpdateBufferSettings`
+GLES overlay buffer accessors (pbuffer present mode): `GFX_GetOverlayVirtual`, `GFX_GetOverlayPhysical`
 Renderer copy helper: `My_QueueCopy`
 Sample-rate selection: `MMIYOO_SelectSampleRate`
 Gamepad mapping: `MMIYOO_JoystickGetGamepadMapping`
@@ -76,4 +77,6 @@ Not supported: `HapticMouse`, `SetAutocenter`
 **Power** (`SDL_GetPowerInfo`): supported, via `SDL_GetPowerInfo_MMIYOO` -- no time-remaining estimate (`seconds` always -1)
 
 **GLES** (`SDL_GLDriverData`, built only with `--enable-gles`): `glLoadLibrary`, `glGetProcAddress`, `glUnloadLibrary`, `glCreateContext`, `glMakeCurrent`, `glDeleteContext`, `glSwapWindow`, `glSetSwapInterval`, `glGetSwapInterval`
-Swap behavior: `glSwapWindow` calls `eglSwapBuffers`; when `eglUpdateBufferSettings` is attached, SwiftShader's framebuffer callback presents through `GFX_SwapBuffers`, otherwise `glSwapWindow` presents through `GFX_SwapBuffers` directly.
+Two present strategies, selected via `SDL_MMIYOO_GLES_PRESENT_MODE`:
+- `pbuffer` (default): an EGL PBuffer surface, `glReadPixels` into `gfx.overlay`, then a single hardware `GFX_Copy`/`MI_GFX_BitBlit` (scale + orientation) to present. Colour-correct; still bound by SwiftShader's software-rasterizer performance ceiling.
+- `windowsurface`: a real EGL WindowSurface presented through the vendor `eglUpdateBufferSettings` extension into `gfx.back` via `GFX_SwapBuffers`. Kept for comparison/regression testing only -- known colour corruption (green patches) in translucent UI regions, root cause not found. See TODO.
