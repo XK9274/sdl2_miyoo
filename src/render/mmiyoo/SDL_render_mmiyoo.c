@@ -2294,10 +2294,7 @@ int My_QueueCopy(SDL_Renderer *renderer,
     effective_rotation = MMIYOO_AddRotations(base_rotation, extra_rotation);
     mirror = MMIYOO_FlipToMirror(flip);
 
-    /* Core-content software integer-scale, gated to the final present of a
-     * streaming (per-frame-updated) texture -- see MMIYOO_TryIntegerScaleCopy
-     * above. Only applies to the default/window target; a target-texture
-     * copy (e.g. into an intermediate render target) is left alone. */
+    /* Core-content software integer-scale; only applies to the default/window target, see MMIYOO_TryIntegerScaleCopy. */
     if (!data->is_target_texture && extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
         used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
                                                           blend_mode, &pixels, &pitch, &src_phy);
