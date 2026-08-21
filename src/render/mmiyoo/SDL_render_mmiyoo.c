@@ -2155,6 +2155,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
 {
     int xmul_raw, ymul_raw, xmul, ymul;
     int scaled_w, scaled_h;
+    unsigned int dst_stride;
     unsigned int required_size;
     MMIYOO_NeonScaleFunc scale_func;
     unsigned int bpp;
@@ -2193,9 +2194,13 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
 
     scaled_w = src->w * xmul;
     scaled_h = src->h * ymul;
-    required_size = (unsigned int)(scaled_w * scaled_h) * bpp;
-    /* NEON scalers need 32-bit-aligned rows; matches the alignment
-     * MMIYOO_CreateTexture already applies to its own texture pitches. */
+    /* MI_GFX_BitBlit requires 16-byte-aligned strides -- align the row
+     * stride itself, not just the total buffer size, or a scaled_w*bpp
+     * that isn't a multiple of 16 hands MI_GFX a misaligned source stride
+     * and faults inside the vendor blob. */
+    dst_stride = (unsigned int)(scaled_w * (int)bpp);
+    dst_stride = (dst_stride + 15) & ~15u;
+    required_size = dst_stride * (unsigned int)scaled_h;
     required_size = (required_size + 63) & ~63u;
 
     if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
@@ -2213,7 +2218,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                    (size_t)src->x * (size_t)bpp;
         scale_func((void *)src_origin, data->scale_scratch_vir,
                    (uint32_t)src->w, (uint32_t)src->h,
-                   (uint32_t)*pitch, (uint32_t)(scaled_w * (int)bpp));
+                   (uint32_t)*pitch, dst_stride);
     }
 
     dst->x += (dst->w - scaled_w) / 2;
@@ -2227,7 +2232,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     src->h = scaled_h;
 
     *pixels = data->scale_scratch_vir;
-    *pitch = scaled_w * (int)bpp;
+    *pitch = (int)dst_stride;
     *src_phy = data->scale_scratch_phy;
 
     return SDL_TRUE;
