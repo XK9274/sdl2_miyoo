@@ -180,22 +180,12 @@ struct MMIYOO_RenderData {
      * double alpha-composite) for fewer hardware blits. */
     SDL_bool geometry_quickpath_enabled;
 
-    /* SDL_MMIYOO_INTEGER_SCALE hint (on by default): software NEON
-     * nearest-neighbor upscale of the core-content frame before an
-     * unscaled hardware present, since MI_GFX_BitBlit has no
-     * interpolation control at all (see notes/blurry-scaling-investigation.md).
-     * Persistent MI_SYS scratch buffer, reused across frames, resized
-     * only when the required size grows. */
+    /* SDL_MMIYOO_INTEGER_SCALE hint (on by default): software NEON upscale before an unscaled hardware present, since MI_GFX_BitBlit has no interpolation control. */
     SDL_bool integer_scale_enabled;
     MI_PHY scale_scratch_phy;
     void *scale_scratch_vir;
     unsigned int scale_scratch_alloc_size;
-    /* Set once a scratch-buffer grow attempt fails, so a sustained
-     * MI_SYS_MMA_Alloc-exhaustion condition (see the Priority 3 MMA-storm
-     * writeup in the TODO) doesn't retry the same failing allocation every
-     * single frame while stuck in a menu/screen that keeps requesting it --
-     * same rate-limiting principle already applied to the OOM log in
-     * MMIYOO_CreateTexture. Cleared whenever a grow attempt succeeds. */
+    /* Latched after a failed grow attempt so a sustained MMA-exhaustion condition doesn't retry every frame; cleared on the next successful grow. */
     SDL_bool scale_scratch_alloc_failed;
 };
 
@@ -2001,31 +1991,17 @@ MMIYOO_FlipToMirror(SDL_RendererFlip flip)
     return E_MI_GFX_MIRROR_NONE;
 }
 
-/* Core-content integer-scale upscaler.
- *
- * MI_GFX_BitBlit has no interpolation control at all (confirmed against the
- * full vendor mi_gfx.h/mi_gfx_datatype.h surface -- MI_GFX_Opt_t has no
- * scaling-filter field, and the old SDL1.2 Miyoo backend hits the exact same
- * hardware API the exact same way, so the softness isn't a missing hardware
- * flag). Reference for this approach: Onion's shipped RetroArch
- * gfx/drivers/miyoomini/ driver (github.com/OnionUI/RetroArch, GPLv3) scales
- * core content in software before an unscaled hardware present -- that
- * architecture is credited here, but no code from it is used. The actual
- * scaler functions below come from neon-arm-library-miyoo
- * (github.com/XK9274/neon-arm-library-miyoo, already linked into every
- * sdl2_miyoo build as libneonarmmiyoo -- see that repo's own README for its
- * attribution disclaimer), which was already compiled into this driver and
- * unused for scaling until now. Full research notes:
- * notes/blurry-scaling-investigation.md (gitignored, local only). */
+/* Core-content integer-scale upscaler: MI_GFX_BitBlit has no interpolation control, so we scale in software instead.
+ * Architecture credit: Onion's RetroArch miyoomini driver (github.com/OnionUI/RetroArch, GPLv3) -- no code copied.
+ * Scaler functions: neon-arm-library-miyoo (github.com/XK9274/neon-arm-library-miyoo), already linked but unused until now.
+ * Research notes: notes/blurry-scaling-investigation.md (gitignored, local only). */
 
 typedef void (*MMIYOO_NeonScaleFunc)(void *src, void *dst, uint32_t sw, uint32_t sh, uint32_t sp, uint32_t dp);
 
 static int
 MMIYOO_ClampHorizontalMul(int raw)
 {
-    /* neon-arm-library-miyoo only provides horizontal multipliers of 1, 2,
-     * or 4 (no 3x variant -- 4x is cheaper than 3x on this NEON path, same
-     * constraint Onion's driver documents for the same library family). */
+    /* neon-arm-library-miyoo only provides horizontal multipliers of 1, 2, or 4. */
     if (raw >= 4) return 4;
     if (raw >= 2) return 2;
     return 1;
@@ -2093,9 +2069,7 @@ MMIYOO_PickScaleFunc(int xmul, int ymul, unsigned int bytes_per_pixel)
     }
 }
 
-/* Ensures data->scale_scratch_{phy,vir,alloc_size} can hold at least
- * required_size bytes, growing (never shrinking) as needed. Persistent for
- * the renderer's lifetime -- freed in MMIYOO_DestroyRenderer. */
+/* Grows the persistent scale scratch buffer to hold required_size bytes; never shrinks; freed in MMIYOO_DestroyRenderer. */
 static SDL_bool
 MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
 {
@@ -2106,13 +2080,7 @@ MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
         return SDL_TRUE;
     }
 
-    /* Once a grow attempt fails, don't keep retrying the same failing
-     * MI_SYS_MMA_Alloc every frame for the same fixed-size request (e.g.
-     * stuck on an Ozone menu screen during the known MMA-exhaustion storm,
-     * see the Priority 3 writeup in the TODO) -- that's exactly the
-     * "retries every frame forever" pattern already flagged as harmful
-     * there. Latched for the renderer's lifetime; a fresh renderer (app
-     * restart) gets a clean retry. */
+    /* Latched after a failed grow so we don't retry the same failing MI_SYS_MMA_Alloc every frame. */
     if (data->scale_scratch_alloc_failed) {
         return SDL_FALSE;
     }
@@ -2138,14 +2106,7 @@ MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
     return SDL_TRUE;
 }
 
-/* Attempts a software integer-scale of the core-content frame. On success,
- * rewrites pixels, pitch, and src_phy to point at the scaled scratch buffer,
- * rewrites src to (0, 0, scaled_w, scaled_h), rewrites dst to the
- * letterboxed-centered destination rect within the originally-requested
- * dst, and returns SDL_TRUE -- the caller then presents this unscaled via
- * the normal GFX_Copy path. Returns SDL_FALSE (nothing rewritten) whenever
- * scaling doesn't apply or fails, so the caller falls through to today's
- * unscaled/hardware-scaled behavior unchanged. */
+/* Software integer-scales into a letterboxed scratch buffer for an unscaled GFX_Copy present; returns SDL_FALSE if scaling doesn't apply. */
 static SDL_bool
 MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                             MMIYOO_TextureData *src_texture_data,
@@ -2184,8 +2145,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     xmul_raw = dst->w / src->w;
     ymul_raw = dst->h / src->h;
     if (xmul_raw < 1 || ymul_raw < 1) {
-        /* Downscale request -- these scalers only upscale, leave it to the
-         * existing hardware path. */
+        /* These scalers only upscale; leave downscales to the hardware path. */
         return SDL_FALSE;
     }
 
@@ -2194,10 +2154,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
 
     scaled_w = src->w * xmul;
     scaled_h = src->h * ymul;
-    /* MI_GFX_BitBlit requires 16-byte-aligned strides -- align the row
-     * stride itself, not just the total buffer size, or a scaled_w*bpp
-     * that isn't a multiple of 16 hands MI_GFX a misaligned source stride
-     * and faults inside the vendor blob. */
+    /* MI_GFX_BitBlit faults on a source stride that isn't 16-byte-aligned. */
     dst_stride = (unsigned int)(scaled_w * (int)bpp);
     dst_stride = (dst_stride + 15) & ~15u;
     required_size = dst_stride * (unsigned int)scaled_h;
@@ -2209,10 +2166,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
 
     scale_func = MMIYOO_PickScaleFunc(xmul, ymul, bpp);
     {
-        /* src->x/src->y is a real crop offset into a possibly-larger
-         * texture (e.g. a core that over-allocates its framebuffer and
-         * only presents a sub-rect) -- must offset into *pixels by it,
-         * not read from the texture's base address unconditionally. */
+        /* src->x/src->y is a real crop offset into a possibly-larger texture. */
         const Uint8 *src_origin = (const Uint8 *)*pixels +
                                    (size_t)src->y * (size_t)*pitch +
                                    (size_t)src->x * (size_t)bpp;
@@ -3334,9 +3288,7 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         }
     }
 
-    /* On by default -- this is the fix for core-content softness, not an
-     * opt-in experiment. Set SDL_MMIYOO_INTEGER_SCALE=0 to fall back to
-     * today's unscaled-blit-only behavior. */
+    /* On by default; set SDL_MMIYOO_INTEGER_SCALE=0 to fall back to unscaled-blit-only behavior. */
     data->integer_scale_enabled = SDL_TRUE;
     {
         const char *integer_scale_hint = SDL_GetHint("SDL_MMIYOO_INTEGER_SCALE");
