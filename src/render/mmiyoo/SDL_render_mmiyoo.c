@@ -190,6 +190,13 @@ struct MMIYOO_RenderData {
     MI_PHY scale_scratch_phy;
     void *scale_scratch_vir;
     unsigned int scale_scratch_alloc_size;
+    /* Set once a scratch-buffer grow attempt fails, so a sustained
+     * MI_SYS_MMA_Alloc-exhaustion condition (see the Priority 3 MMA-storm
+     * writeup in the TODO) doesn't retry the same failing allocation every
+     * single frame while stuck in a menu/screen that keeps requesting it --
+     * same rate-limiting principle already applied to the OOM log in
+     * MMIYOO_CreateTexture. Cleared whenever a grow attempt succeeds. */
+    SDL_bool scale_scratch_alloc_failed;
 };
 
 typedef struct {
@@ -2099,11 +2106,24 @@ MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
         return SDL_TRUE;
     }
 
+    /* Once a grow attempt fails, don't keep retrying the same failing
+     * MI_SYS_MMA_Alloc every frame for the same fixed-size request (e.g.
+     * stuck on an Ozone menu screen during the known MMA-exhaustion storm,
+     * see the Priority 3 writeup in the TODO) -- that's exactly the
+     * "retries every frame forever" pattern already flagged as harmful
+     * there. Latched for the renderer's lifetime; a fresh renderer (app
+     * restart) gets a clean retry. */
+    if (data->scale_scratch_alloc_failed) {
+        return SDL_FALSE;
+    }
+
     if (MI_SYS_MMA_Alloc(NULL, required_size, &new_phy) != MI_SUCCESS) {
+        data->scale_scratch_alloc_failed = SDL_TRUE;
         return SDL_FALSE;
     }
     if (MI_SYS_Mmap(new_phy, required_size, &new_vir, TRUE) != MI_SUCCESS) {
         MI_SYS_MMA_Free(new_phy);
+        data->scale_scratch_alloc_failed = SDL_TRUE;
         return SDL_FALSE;
     }
 
@@ -2183,9 +2203,18 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     }
 
     scale_func = MMIYOO_PickScaleFunc(xmul, ymul, bpp);
-    scale_func((void *)*pixels, data->scale_scratch_vir,
-               (uint32_t)src->w, (uint32_t)src->h,
-               (uint32_t)*pitch, (uint32_t)(scaled_w * (int)bpp));
+    {
+        /* src->x/src->y is a real crop offset into a possibly-larger
+         * texture (e.g. a core that over-allocates its framebuffer and
+         * only presents a sub-rect) -- must offset into *pixels by it,
+         * not read from the texture's base address unconditionally. */
+        const Uint8 *src_origin = (const Uint8 *)*pixels +
+                                   (size_t)src->y * (size_t)*pitch +
+                                   (size_t)src->x * (size_t)bpp;
+        scale_func((void *)src_origin, data->scale_scratch_vir,
+                   (uint32_t)src->w, (uint32_t)src->h,
+                   (uint32_t)*pitch, (uint32_t)(scaled_w * (int)bpp));
+    }
 
     dst->x += (dst->w - scaled_w) / 2;
     dst->y += (dst->h - scaled_h) / 2;
