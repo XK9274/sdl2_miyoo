@@ -103,7 +103,7 @@ typedef struct {
 } MMIYOO_PooledBlock;
 
 #define MMIYOO_TEXTURE_POOL_MAX_ENTRIES 24
-#define MMIYOO_TEXTURE_POOL_DEFAULT_MAX_BYTES (2u * 1024u * 1024u)
+#define MMIYOO_TEXTURE_POOL_DEFAULT_MAX_BYTES (10u * 1024u * 1024u)
 /* Reject a candidate block if satisfying the request would waste more than
  * this fraction of it, so the pool can't permanently pin oversized blocks
  * against tiny requests. */
