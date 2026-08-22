@@ -5,6 +5,9 @@ SDL2 cross-compiled for the Miyoo Mini (arm-linux-gnueabihf, hard-float).
 The Miyoo Mini runs on an SSD202D (Sigmastar/MStar) SoC with proprietary MI
 (Media Interface) libraries for display, audio, and GFX acceleration.
 
+> **AI disclosure:** there's been a substantial usage of various LLM in this
+> project to both write the code & maintain the repo itself.
+
 Changes
 -------
 
