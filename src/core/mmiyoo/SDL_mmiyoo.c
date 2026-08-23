@@ -19,6 +19,7 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 #include "../../SDL_internal.h"
+#include "SDL.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -340,7 +341,14 @@ SDL_bool
 MMIYOO_IsKeyboardModeActive(void)
 {
     const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_INPUT_MODE);
-    return (mode && SDL_strcmp(mode, MMIYOO_INPUT_MODE_KEYBOARD) == 0) ? SDL_TRUE : SDL_FALSE;
+    if (mode) {
+        return SDL_strcmp(mode, MMIYOO_INPUT_MODE_KEYBOARD) == 0 ? SDL_TRUE : SDL_FALSE;
+    }
+    /* No explicit hint: apps that never init the joystick subsystem have no
+     * other way to receive input, so default them to synthesized keyboard
+     * events. Apps that do call SDL_INIT_JOYSTICK (e.g. RetroArch) keep
+     * getting real joystick events, unaffected by this default. */
+    return SDL_WasInit(SDL_INIT_JOYSTICK) ? SDL_FALSE : SDL_TRUE;
 }
 
 SDL_bool
