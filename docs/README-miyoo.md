@@ -32,7 +32,7 @@ to be present, or use `--docker` to bootstrap it automatically.
 Bootstrap without an installed toolchain:
 
 ```bash
-./build-scripts/mk_miyoo.sh --docker
+./build-scripts/mk_miyoo.sh --docker --enable-gles
 ```
 
 This clones `XK9274/union-miyoomini-toolchain`, builds the Docker image, and
@@ -42,8 +42,14 @@ for subsequent runs.
 Direct build with the toolchain already at `/opt/miyoomini-toolchain`:
 
 ```bash
-./build-scripts/mk_miyoo.sh
+./build-scripts/mk_miyoo.sh --enable-gles
 ```
+
+The Miyoo build defaults to GLES/EGL disabled. Pass `--enable-gles` for the
+normal Miyoo build; it configures SDL with both `--enable-video-opengles` and
+`--enable-video-opengles2` and produces the EGL/GLES-enabled SDL backend. The
+resulting `output/` directory includes the SDL library alongside the required
+`libEGL.so` and `libGLESv2.so` runtime libraries.
 
 Build options
 -------------
