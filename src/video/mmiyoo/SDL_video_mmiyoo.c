@@ -543,34 +543,42 @@ int GFX_Copy(const void *pixels,
     /* Blend-factor mapping follows SigmaStar docs (see
      *   GFX - SigmaStarDocs copy.txt §3.9/3.10 for DfbBldOp_e and DfbBlendFlags_e
      * and SDL's composed modes in src/render/SDL_render.c). */
-    /* ALPHACHANNEL flag is required whenever a blend factor below references SRCALPHA/INVSRCALPHA, or the hardware never reads real per-pixel alpha (GFX - SigmaStarDocs.txt Sec 2.10). */
-    switch (blend_mode) {
-        case SDL_BLENDMODE_NONE:
-            gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
-            gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
-            break;
-        case SDL_BLENDMODE_ADD:
-            gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
-            gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_ALPHACHANNEL;
-            break;
-        case SDL_BLENDMODE_MOD:
-            gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
-            gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_SRCCOLOR;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
-            break;
-        case SDL_BLENDMODE_MUL:
-            gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_DESTCOLOR;
-            gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_ALPHACHANNEL;
-            break;
-        default:
-            /* SDL_BLENDMODE_BLEND and any unknown modes fall back to standard alpha blending */
-            gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
-            gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-            gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_ALPHACHANNEL;
-            break;
+    /* Only set ALPHACHANNEL when the source format actually has alpha (RGB565/BGR565 don't). */
+    {
+        const SDL_bool src_has_alpha = (mi_src_format != E_MI_GFX_FMT_RGB565 &&
+                                         mi_src_format != E_MI_GFX_FMT_BGR565);
+
+        switch (blend_mode) {
+            case SDL_BLENDMODE_NONE:
+                gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
+                gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
+                gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+                break;
+            case SDL_BLENDMODE_ADD:
+                gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
+                gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
+                gfx.hw.opt.eDFBBlendFlag =
+                    src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                break;
+            case SDL_BLENDMODE_MOD:
+                gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
+                gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_SRCCOLOR;
+                gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+                break;
+            case SDL_BLENDMODE_MUL:
+                gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_DESTCOLOR;
+                gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
+                gfx.hw.opt.eDFBBlendFlag =
+                    src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                break;
+            default:
+                /* SDL_BLENDMODE_BLEND and any unknown modes fall back to standard alpha blending */
+                gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
+                gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
+                gfx.hw.opt.eDFBBlendFlag =
+                    src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                break;
+        }
     }
 
     /* COLORIZE/COLORALPHA tint the source via u32GlobalSrcConstColor (A8:R8:G8:B8); skip entirely when there's nothing to modulate. */
