@@ -1,164 +1,129 @@
 name: Release SDL2 (Miyoo Mini)
 
 on:
-  push:
-    tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Release tag (e.g. v2.0.22-miyoo1). Leave blank to auto-bump the patch version of the latest release."
+      ref:
+        description: "Commit SHA, branch, or tag to build (blank uses the dispatched commit)"
         required: false
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   preflight:
-    name: Pre-release checks
+    name: Resolve release commit
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
+      target_sha: ${{ steps.commit.outputs.target_sha }}
+      release_tag: ${{ steps.commit.outputs.release_tag }}
 
     steps:
-      - name: Checkout
+      - name: Checkout requested ref
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
 
-      - name: Resolve tag
-        id: version
+      - name: Resolve commit marker
+        id: commit
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
-            TAG="${{ inputs.tag }}"
-          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
-            if [[ -z "$LATEST_TAG" ]]; then
-              TAG="v0.1.0"
-              echo "No existing release tags found -- starting at $TAG"
-            else
-              VER="${LATEST_TAG#v}"
-              MAJOR="${VER%%.*}"
-              REST="${VER#*.}"
-              MINOR="${REST%%.*}"
-              PATCH="${REST#*.}"
-              PATCH="${PATCH%%-*}"
-              TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
-              echo "No tag given -- auto-bumping latest release $LATEST_TAG -> $TAG"
-            fi
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
+          TARGET_SHA=$(git rev-parse HEAD)
+          RELEASE_TAG="sdl2-miyoo-${TARGET_SHA}"
 
-          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "Tag '$TAG' does not match vMAJOR.MINOR.PATCH format"
-            exit 1
-          fi
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "Building commit $TARGET_SHA"
 
-          VERSION="${TAG#v}"
-          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Releasing $TAG"
-
-      - name: Verify tag exists on a tracked branch
-        run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          BRANCHES=$(git branch -r --contains "HEAD" 2>/dev/null || true)
-          if [[ -z "$BRANCHES" ]]; then
-            echo "Warning: could not determine containing branches — proceeding"
-          else
-            echo "Tag is reachable from: $BRANCHES"
-          fi
-
-      - name: Check for uncommitted changes
-        run: |
-          if [[ -n "$(git status --porcelain)" ]]; then
-            echo "Working tree is dirty — release must be built from a clean tree"
-            git status
-            exit 1
-          fi
-
-      - name: Check tag is not a duplicate release
+      - name: Check for duplicate release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release '$TAG' already exists — bump the version"
+          RELEASE_TAG="${{ steps.commit.outputs.release_tag }}"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release '$RELEASE_TAG' already exists for this commit"
             exit 1
           fi
 
-      - name: Verify build-scripts/mk_miyoo.sh is present
+      - name: Verify build inputs
         run: |
-          if [[ ! -f "build-scripts/mk_miyoo.sh" ]]; then
-            echo "build-scripts/mk_miyoo.sh missing from repo"
-            exit 1
-          fi
-
-      - name: Verify autogen.sh is present
-        run: |
-          if [[ ! -f "autogen.sh" ]]; then
-            echo "autogen.sh missing — source tree is incomplete"
-            exit 1
-          fi
+          test -f build-scripts/mk_miyoo.sh
+          test -f autogen.sh
 
   build:
-    name: Build
+    name: Build and package (${{ matrix.variant }})
     needs: preflight
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: nogl
+            description: Non-GL
+            gles_flag: --disable-gles
+          - variant: gles
+            description: GL/EGL
+            gles_flag: --enable-gles
 
     steps:
-      - name: Checkout SDL2 source
+      - name: Checkout release commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.target_sha }}
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            autoconf automake libtool pkg-config \
-            make gcc g++ patch \
-            git wget
-
-      - name: Install miyoomini toolchain
-        run: |
-          ARCH=$(uname -m)
-          if [[ "$ARCH" == "aarch64" ]]; then
-            REPO=miyoomini-toolchain-buildroot-aarch64
-          else
-            REPO=miyoomini-toolchain-buildroot
-          fi
-          wget -q "https://github.com/shauninman/$REPO/releases/download/v0.0.3/miyoomini-toolchain.tar.xz" -O /tmp/toolchain.tar.xz
-          sudo mkdir -p /opt
-          sudo tar -xf /tmp/toolchain.tar.xz -C /opt
-          rm /tmp/toolchain.tar.xz
-
-      - name: Build via mk_miyoo.sh
+      - name: Build via mk_miyoo.sh (${{ matrix.description }})
         run: |
           chmod +x build-scripts/mk_miyoo.sh
-          ./build-scripts/mk_miyoo.sh --jobs "$(nproc)"
+          ./build-scripts/mk_miyoo.sh --docker ${{ matrix.gles_flag }} --clean build --jobs "$(nproc)"
 
-      - name: Verify artifact
+      - name: Verify build output
         run: |
           LIB="${{ github.workspace }}/output/libSDL2-2.0.so.0"
-          if [[ ! -f "$LIB" ]]; then
-            echo "Build output not found at $LIB"
-            find "${{ github.workspace }}/build" -name "libSDL2*" 2>/dev/null || true
-            exit 1
+          test -f "$LIB"
+          file "$LIB"
+          readelf -h "$LIB" | grep -E "Class|Machine|Flags"
+          readelf -d "$LIB" | grep NEEDED || true
+
+          NEON_LIB="${{ github.workspace }}/libneonarmmiyoo.so"
+          test -f "$NEON_LIB" || { echo "Neon helper not built: $NEON_LIB"; exit 1; }
+
+      - name: Package release archive
+        id: package
+        env:
+          TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+          VARIANT: ${{ matrix.variant }}
+          DESCRIPTION: ${{ matrix.description }}
+        run: |
+          ARCHIVE="libSDL2-miyoo-${VARIANT}-${TARGET_SHA}.tar.gz"
+          mkdir -p package
+          cp output/libSDL2-2.0.so.0 package/
+          cp libneonarmmiyoo.so package/
+          FILES=(libSDL2-2.0.so.0 libneonarmmiyoo.so)
+
+          if [[ "${{ matrix.variant }}" == "gles" ]]; then
+            test -f libEGL.so || { echo "libEGL.so missing for gles variant"; exit 1; }
+            test -f libGLESv2.so || { echo "libGLESv2.so missing for gles variant"; exit 1; }
+            cp libEGL.so libGLESv2.so package/
+            FILES+=(libEGL.so libGLESv2.so)
           fi
 
-      - name: Generate checksum
-        run: |
-          cd "${{ github.workspace }}/output"
-          sha256sum libSDL2-2.0.so.0 > libSDL2-2.0.so.0.sha256
-          cat libSDL2-2.0.so.0.sha256
+          ( cd package && sha256sum "${FILES[@]}" > SHA256SUMS.txt )
+          printf 'commit=%s\nvariant=%s\ngles_flag=%s\n' \
+            "$TARGET_SHA" "$DESCRIPTION" "${{ matrix.gles_flag }}" > package/BUILD-INFO.txt
+          tar -czf "$ARCHIVE" -C package \
+            "${FILES[@]}" SHA256SUMS.txt BUILD-INFO.txt
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          cat "${ARCHIVE}.sha256"
 
-      - name: Upload build artifact
+      - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libSDL2-miyoo-${{ needs.preflight.outputs.tag }}
+          name: libSDL2-miyoo-${{ matrix.variant }}-${{ needs.preflight.outputs.target_sha }}
           path: |
-            output/libSDL2-2.0.so.0
-            output/libSDL2-2.0.so.0.sha256
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
           if-no-files-found: error
 
   release:
@@ -169,39 +134,47 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download artifact
+      - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: libSDL2-miyoo-${{ needs.preflight.outputs.tag }}
+          pattern: libSDL2-miyoo-*-${{ needs.preflight.outputs.target_sha }}
           path: output
+          merge-multiple: true
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
         run: |
-          TAG="${{ needs.preflight.outputs.tag }}"
-          VERSION="${{ needs.preflight.outputs.version }}"
-
-          gh release create "$TAG" \
-            output/libSDL2-2.0.so.0 \
-            output/libSDL2-2.0.so.0.sha256 \
-            --title "SDL2 Miyoo Mini $TAG" \
+          ls -la output
+          gh release create "$RELEASE_TAG" \
+            output/*.tar.gz \
+            output/*.tar.gz.sha256 \
+            --target "$TARGET_SHA" \
+            --title "SDL2 Miyoo $TARGET_SHA" \
             --notes "$(cat <<NOTES
-          ## SDL2 for Miyoo Mini — $TAG
+          ## SDL2 for Miyoo Mini
+
+          Commit marker: \`$TARGET_SHA\`
 
           Cross-compiled for \`arm-linux-gnueabihf\` using the miyoomini-toolchain.
 
           ### Artifacts
-          | File | Description |
-          |------|-------------|
-          | \`libSDL2-2.0.so.0\` | Stripped release build |
-          | \`libSDL2-2.0.so.0.sha256\` | SHA-256 checksum |
+          | Variant | Archive |
+          |---------|---------|
+          | Non-GL | \`libSDL2-miyoo-nogl-$TARGET_SHA.tar.gz\` |
+          | GL/EGL | \`libSDL2-miyoo-gles-$TARGET_SHA.tar.gz\` |
+
+          Each archive includes \`libSDL2-2.0.so.0\`, the Neon helper
+          (\`libneonarmmiyoo.so\`); the GL/EGL archive additionally includes
+          \`libEGL.so\` and \`libGLESv2.so\`. Every archive also carries a
+          \`SHA256SUMS.txt\` covering its libraries and a build-info file with
+          the commit marker and build variant.
 
           ### Build info
-          - Commit: ${{ github.sha }}
+          - Commit: $TARGET_SHA
           - Toolchain: [XK9274/union-miyoomini-toolchain](https://github.com/XK9274/union-miyoomini-toolchain)
           - Neon helper: [XK9274/neon-arm-library-miyoo](https://github.com/XK9274/neon-arm-library-miyoo)
           NOTES
