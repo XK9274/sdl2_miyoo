@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       target_sha: ${{ steps.commit.outputs.target_sha }}
+      short_sha: ${{ steps.commit.outputs.short_sha }}
       release_tag: ${{ steps.commit.outputs.release_tag }}
 
     steps:
@@ -30,11 +31,13 @@ jobs:
         id: commit
         run: |
           TARGET_SHA=$(git rev-parse HEAD)
-          RELEASE_TAG="sdl2-miyoo-${TARGET_SHA}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RELEASE_TAG="sdl2-miyoo-${SHORT_SHA}"
 
           echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-          echo "Building commit $TARGET_SHA"
+          echo "Building commit $TARGET_SHA ($SHORT_SHA)"
 
       - name: Check for duplicate release
         env:
@@ -92,10 +95,11 @@ jobs:
         id: package
         env:
           TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+          SHORT_SHA: ${{ needs.preflight.outputs.short_sha }}
           VARIANT: ${{ matrix.variant }}
           DESCRIPTION: ${{ matrix.description }}
         run: |
-          ARCHIVE="libSDL2-miyoo-${VARIANT}-${TARGET_SHA}.tar.gz"
+          ARCHIVE="libSDL2-miyoo-${VARIANT}-${SHORT_SHA}.tar.gz"
           mkdir -p package
           cp output/libSDL2-2.0.so.0 package/
           cp libneonarmmiyoo.so package/
@@ -120,7 +124,7 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libSDL2-miyoo-${{ matrix.variant }}-${{ needs.preflight.outputs.target_sha }}
+          name: libSDL2-miyoo-${{ matrix.variant }}-${{ needs.preflight.outputs.short_sha }}
           path: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.archive }}.sha256
@@ -137,7 +141,7 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: libSDL2-miyoo-*-${{ needs.preflight.outputs.target_sha }}
+          pattern: libSDL2-miyoo-*-${{ needs.preflight.outputs.short_sha }}
           path: output
           merge-multiple: true
 
@@ -146,6 +150,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TARGET_SHA: ${{ needs.preflight.outputs.target_sha }}
+          SHORT_SHA: ${{ needs.preflight.outputs.short_sha }}
           RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
         run: |
           ls -la output
@@ -153,19 +158,19 @@ jobs:
             output/*.tar.gz \
             output/*.tar.gz.sha256 \
             --target "$TARGET_SHA" \
-            --title "SDL2 Miyoo $TARGET_SHA" \
+            --title "SDL2 Miyoo $SHORT_SHA" \
             --notes "$(cat <<NOTES
           ## SDL2 for Miyoo Mini
 
-          Commit marker: \`$TARGET_SHA\`
+          Commit marker: \`$SHORT_SHA\`
 
           Cross-compiled for \`arm-linux-gnueabihf\` using the miyoomini-toolchain.
 
           ### Artifacts
           | Variant | Archive |
           |---------|---------|
-          | Non-GL | \`libSDL2-miyoo-nogl-$TARGET_SHA.tar.gz\` |
-          | GL/EGL | \`libSDL2-miyoo-gles-$TARGET_SHA.tar.gz\` |
+          | Non-GL | \`libSDL2-miyoo-nogl-$SHORT_SHA.tar.gz\` |
+          | GL/EGL | \`libSDL2-miyoo-gles-$SHORT_SHA.tar.gz\` |
 
           Each archive includes \`libSDL2-2.0.so.0\`, the Neon helper
           (\`libneonarmmiyoo.so\`); the GL/EGL archive additionally includes
@@ -174,7 +179,7 @@ jobs:
           the commit marker and build variant.
 
           ### Build info
-          - Commit: $TARGET_SHA
+          - Commit: $SHORT_SHA (\`$TARGET_SHA\`)
           - Toolchain: [XK9274/union-miyoomini-toolchain](https://github.com/XK9274/union-miyoomini-toolchain)
           - Neon helper: [XK9274/neon-arm-library-miyoo](https://github.com/XK9274/neon-arm-library-miyoo)
           NOTES
