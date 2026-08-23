@@ -44,6 +44,7 @@
 #include "../../video/mmiyoo/SDL_video_mmiyoo.h"
 #include "../../video/mmiyoo/SDL_event_mmiyoo.h"
 #include "SDL_rect.h"
+#include "SDL_timer.h"
 #include "neon.h"
 
 
