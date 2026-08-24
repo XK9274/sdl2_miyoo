@@ -1163,6 +1163,15 @@ MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
         }
     }
 
+    if (!data->is_target_texture && SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
+        MMIYOO_LOG_WARN("SCALEDBG PrepareDrawRect: target_bounds=(%d,%d,%d,%d) viewport_on=%d viewport=(%d,%d,%d,%d) original_dst=(%d,%d,%d,%d) final_dst=(%d,%d,%d,%d)",
+                        target_bounds.x, target_bounds.y, target_bounds.w, target_bounds.h,
+                        (int)data->viewport_enabled,
+                        data->viewport.x, data->viewport.y, data->viewport.w, data->viewport.h,
+                        original_dst.x, original_dst.y, original_dst.w, original_dst.h,
+                        final_dst.x, final_dst.y, final_dst.w, final_dst.h);
+    }
+
     *dst = final_dst;
 
     if (out_clip) {
@@ -2193,6 +2202,42 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     return SDL_TRUE;
 }
 
+/* Stretches a full-texture blit to fill the framebuffer when dst is smaller than the screen. */
+static void
+MMIYOO_TryStretchFillCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
+                           SDL_Rect *src, SDL_Rect *dst, SDL_BlendMode blend_mode)
+{
+    int framebuffer_width;
+    int framebuffer_height;
+
+    if (blend_mode != SDL_BLENDMODE_NONE) {
+        return;
+    }
+    if (texture->access != SDL_TEXTUREACCESS_STREAMING) {
+        return;
+    }
+    if (src->w <= 0 || src->h <= 0 || dst->w <= 0 || dst->h <= 0) {
+        return;
+    }
+    if (src->x != 0 || src->y != 0 || src->w != texture->w || src->h != texture->h) {
+        /* Deliberate crop/sub-rect draw, not a full-content present. */
+        return;
+    }
+
+    framebuffer_width = MMIYOO_GetFramebufferWidth(data);
+    framebuffer_height = MMIYOO_GetFramebufferHeight(data);
+
+    if (dst->x == 0 && dst->y == 0 && dst->w == framebuffer_width && dst->h == framebuffer_height) {
+        /* Already fills the framebuffer. */
+        return;
+    }
+
+    dst->x = 0;
+    dst->y = 0;
+    dst->w = framebuffer_width;
+    dst->h = framebuffer_height;
+}
+
 int My_QueueCopy(SDL_Renderer *renderer,
                  SDL_Texture *texture,
                  const void *pixels,
@@ -2299,6 +2344,9 @@ int My_QueueCopy(SDL_Renderer *renderer,
     if (!data->is_target_texture && extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
         used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
                                                           blend_mode, &pixels, &pitch, &src_phy);
+        if (!used_integer_scale) {
+            MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
+        }
     }
 
     // DMA optimization: if both source and target are MI_SYS textures, use hardware blit
@@ -2341,6 +2389,16 @@ int My_QueueCopy(SDL_Renderer *renderer,
 
     if (src_texture_data && !used_integer_scale) {
         src_phy = src_texture_data->phyAddr;
+    }
+
+    if (!data->is_target_texture && SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
+        MMIYOO_LOG_WARN("SCALEDBG QueueCopy: fb=%dx%d target_surf=%ux%u int_scale=%d src=(%d,%d,%d,%d) dst=(%d,%d,%d,%d) hw_dst=(%d,%d,%d,%d)",
+                        MMIYOO_GetFramebufferWidth(data), MMIYOO_GetFramebufferHeight(data),
+                        (unsigned int)data->current_target_surface.u32Width, (unsigned int)data->current_target_surface.u32Height,
+                        (int)used_integer_scale,
+                        src.x, src.y, src.w, src.h,
+                        dst.x, dst.y, dst.w, dst.h,
+                        hw_dst.x, hw_dst.y, hw_dst.w, hw_dst.h);
     }
 
     copy_result = GFX_Copy(pixels, src_phy, src, hw_dst, pitch, (int)effective_rotation, mirror, blend_mode, &data->current_target_surface,
@@ -3355,6 +3413,12 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         if (data->framebuffer_height <= 0) {
             data->framebuffer_height = MMIYOO_DEFAULT_FRAMEBUFFER_HEIGHT;
         }
+    }
+
+    if (SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
+        MMIYOO_LOG_WARN("SCALEDBG RendererInit: GFX_GetFrameWidth/Height=%dx%d final framebuffer_width/height=%dx%d",
+                        (int)GFX_GetFrameWidth(), (int)GFX_GetFrameHeight(),
+                        data->framebuffer_width, data->framebuffer_height);
     }
 
     memset(&data->current_target_surface, 0, sizeof(MI_GFX_Surface_t));
