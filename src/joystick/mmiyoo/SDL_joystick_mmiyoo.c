@@ -164,10 +164,18 @@ static void MMIYOO_JoystickUpdate(SDL_Joystick *joystick)
 
     changed = previous_button_state ^ button_state;
     if (changed) {
+        static const char *button_names[MMIYOO_BUTTON_COUNT] = {
+            "UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y",
+            "L1", "R1", "L2", "R2", "SELECT", "START", "MENU",
+            "QSAVE", "QLOAD", "FF", "EXIT", "POWER", "VOLUP", "VOLDOWN"
+        };
         for (i = 0; i < MMIYOO_BUTTON_COUNT; ++i) {
             const Uint32 bit = (1u << i);
 
             if (changed & bit) {
+                if ((button_state & bit) && SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
+                    SDL_Log("BTNDBG press: %s", button_names[i]);
+                }
                 SDL_PrivateJoystickButton(joystick, (Uint8)i, (button_state & bit) ? SDL_PRESSED : SDL_RELEASED);
             }
         }
