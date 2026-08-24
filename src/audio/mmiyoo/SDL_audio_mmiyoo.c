@@ -53,8 +53,9 @@ static MI_AUDIO_DEV g_AoDevId = 0;
 #define MMIYOO_AUDIO_DEFAULT_FREQ            44100
 #define MMIYOO_AUDIO_SAMPLE_ALIGN            128    /* MI_AO requires u32PtNumPerFrm aligned to this */
 #define MMIYOO_AUDIO_FRAME_COUNT             6      /* MI_AUDIO_Attr_t.u32FrmNum: internal AO frame buffer count */
-#define MMIYOO_AUDIO_PORT_DEPTH_MIN          12     /* MI_SYS_SetChnOutputPortDepth: min queued output frames */
-#define MMIYOO_AUDIO_PORT_DEPTH_MAX          13     /* MI_SYS_SetChnOutputPortDepth: max queued output frames */
+#define MMIYOO_AUDIO_PORT_DEPTH_MIN          6      /* MI_SYS_SetChnOutputPortDepth: min queued output frames */
+#define MMIYOO_AUDIO_PORT_DEPTH_MAX          7      /* MI_SYS_SetChnOutputPortDepth: max queued output frames */
+#define MMIYOO_AUDIO_TARGET_BACKLOG_FRAMES   2      /* WaitDevice throttle target, revisit if too tight/loose */
 #define MMIYOO_AUDIO_WAIT_DELAY_MIN_MS       5      /* WaitDevice poll floor: avoid a tight QueryChnStat spin */
 #define MMIYOO_AUDIO_RETRY_DELAY_MS          1      /* PlayDevice retry spacing on MI_AO_ERR_NOBUF */
 /* MI_AO_SendFrame's s32MilliSec: -1 blocks until space is free (the pattern
@@ -250,7 +251,7 @@ static void MMIYOO_WaitDevice(_THIS)
 {
 #if defined(MMIYOO)
     MI_AO_ChnState_t aoState;
-    MI_U32 needed;
+    MI_U32 target_backlog_bytes;
     MI_U32 bytes_per_second;
     MI_S32 ret;
 
@@ -258,12 +259,13 @@ static void MMIYOO_WaitDevice(_THIS)
         return;
     }
 
-    needed = this->hidden->mixlen;
-    if (needed == 0U) {
+    if (this->hidden->mixlen == 0U) {
         return;
     }
+    target_backlog_bytes = MMIYOO_AUDIO_TARGET_BACKLOG_FRAMES * this->hidden->mixlen;
     bytes_per_second = (this->hidden->frame_bytes && this->spec.freq > 0) ? (this->spec.freq * this->hidden->frame_bytes) : 0;
 
+    /* Throttle on queued backlog, not free space, to keep steady-state latency low. */
     while (SDL_AtomicGet(&this->enabled)) {
         ret = MI_AO_QueryChnStat(g_AoDevId, g_AoChn, &aoState);
         if (ret != MI_SUCCESS) {
@@ -271,7 +273,7 @@ static void MMIYOO_WaitDevice(_THIS)
             continue;
         }
 
-        if (aoState.u32ChnFreeNum >= needed) {
+        if (aoState.u32ChnBusyNum <= target_backlog_bytes) {
             break;
         }
 
@@ -281,7 +283,7 @@ static void MMIYOO_WaitDevice(_THIS)
             Uint32 deficit;
             Uint32 delay_ms;
 
-            deficit = needed - aoState.u32ChnFreeNum;
+            deficit = aoState.u32ChnBusyNum - target_backlog_bytes;
             delay_ms = (deficit * 1000U) / bytes_per_second;
             if (delay_ms < MMIYOO_AUDIO_WAIT_DELAY_MIN_MS) {
                 delay_ms = MMIYOO_AUDIO_WAIT_DELAY_MIN_MS;
