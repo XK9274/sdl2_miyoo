@@ -233,7 +233,7 @@ fi
 [[ "$VERBOSE" == true ]] && set -x
 
 OUTPUT_DIR="$SDL_DIR/output"
-NEON_REPO="https://github.com/XK9274/neon-arm-library-miyoo.git"
+NEON_REPO="${NEON_REPO:-https://github.com/XK9274/neon-arm-library-miyoo.git}"
 NEON_CLONE_DIR="/tmp/neon-arm-library-miyoo"
 TOOLCHAIN_ROOT="/opt/miyoomini-toolchain"
 
@@ -321,6 +321,13 @@ if [[ "$BUILD_NEON" == true ]]; then
     if [[ ! -d "$NEON_CLONE_DIR/.git" ]]; then
         rm -rf "$NEON_CLONE_DIR"
         git clone "$NEON_REPO" "$NEON_CLONE_DIR"
+    fi
+    if [[ -n "${NEON_REF:-}" ]]; then
+        # Test a feature branch/ref before it's merged to the default branch,
+        # without changing behavior for any other consumer of this driver.
+        echo -e "${YELLOW}Using neon-arm-library-miyoo ref: $NEON_REF${NC}"
+        git -C "$NEON_CLONE_DIR" fetch --depth=1 origin "$NEON_REF"
+        git -C "$NEON_CLONE_DIR" checkout --force --detach FETCH_HEAD
     else
         git -C "$NEON_CLONE_DIR" fetch --depth=1 origin
         git -C "$NEON_CLONE_DIR" reset --hard origin/HEAD
