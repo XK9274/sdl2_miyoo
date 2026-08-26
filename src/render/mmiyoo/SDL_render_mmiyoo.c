@@ -188,6 +188,11 @@ struct MMIYOO_RenderData {
     unsigned int scale_scratch_alloc_size;
     /* Latched after a failed grow attempt so a sustained MMA-exhaustion condition doesn't retry every frame; cleared on the next successful grow. */
     SDL_bool scale_scratch_alloc_failed;
+
+    /* Latched after MMIYOO_TryDownscaleCompositeCopy first hits a degenerate/
+     * unsupported case (zero-size texture, non-32bpp format) so it logs once
+     * instead of every frame. */
+    SDL_bool downscale_unsupported_warned;
 };
 
 typedef struct {
@@ -2116,6 +2121,114 @@ MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
     return SDL_TRUE;
 }
 
+/* Generic downscale dispatch: source and destination dims are runtime
+ * arguments (see downscale_area_n32 in neon-arm-library-miyoo), so unlike
+ * MMIYOO_PickScaleFunc there's no per-ratio switch -- pixel format is the
+ * only gate. NULL means "can't handle this format", not "unknown ratio". */
+typedef void (*MMIYOO_NeonDownscaleFunc)(void *src, void *dst, uint32_t sw, uint32_t sh, uint32_t sp, uint32_t dp, uint32_t dw, uint32_t dh);
+
+static MMIYOO_NeonDownscaleFunc
+MMIYOO_PickDownscaleFunc(unsigned int bytes_per_pixel)
+{
+    if (bytes_per_pixel == 4) {
+        return (MMIYOO_NeonDownscaleFunc)downscale_area_n32;
+    }
+    return NULL;
+}
+
+/* Downscales an oversized render-target texture into a panel-sized scratch
+ * buffer before it reaches the rotated screen-composite blit that hangs
+ * MI_GFX on an oversized source (see My_QueueCopy's base_rotation). Mirrors
+ * MMIYOO_TryIntegerScaleCopy's shape/scratch-buffer reuse, opposite
+ * direction. Returns SDL_FALSE for degenerate/unsupported input; the caller
+ * must skip the draw entirely rather than fall through to GFX_Copy with the
+ * untouched oversized source. */
+static SDL_bool
+MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
+                                  MMIYOO_TextureData *src_texture_data,
+                                  SDL_Rect *src, SDL_Rect *dst,
+                                  SDL_BlendMode blend_mode,
+                                  const void **pixels, int *pitch, MI_PHY *src_phy)
+{
+    int framebuffer_width;
+    int framebuffer_height;
+    unsigned int dst_stride;
+    unsigned int required_size;
+    unsigned int bpp;
+    MMIYOO_NeonDownscaleFunc downscale_func;
+
+    (void)texture;
+
+    if (blend_mode != SDL_BLENDMODE_NONE) {
+        return SDL_FALSE;
+    }
+    if (src->w <= 0 || src->h <= 0) {
+        return SDL_FALSE;
+    }
+
+    bpp = src_texture_data->bytes_per_pixel;
+    downscale_func = MMIYOO_PickDownscaleFunc(bpp);
+
+    framebuffer_width = MMIYOO_GetFramebufferWidth(data);
+    framebuffer_height = MMIYOO_GetFramebufferHeight(data);
+
+    if (!downscale_func || framebuffer_width <= 0 || framebuffer_height <= 0) {
+        if (!data->downscale_unsupported_warned) {
+            MMIYOO_LOG_WARN("MMIYOO_TryDownscaleCompositeCopy: unsupported oversized composite (bpp=%u src=%dx%d fb=%dx%d), dropping draw",
+                            bpp, src->w, src->h, framebuffer_width, framebuffer_height);
+            data->downscale_unsupported_warned = SDL_TRUE;
+        }
+        return SDL_FALSE;
+    }
+
+    dst_stride = (unsigned int)(framebuffer_width * (int)bpp);
+    dst_stride = (dst_stride + 15) & ~15u;
+    required_size = dst_stride * (unsigned int)framebuffer_height;
+    required_size = (required_size + 63) & ~63u;
+
+    if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
+        return SDL_FALSE;
+    }
+
+    {
+        const Uint8 *src_origin = (const Uint8 *)*pixels +
+                                   (size_t)src->y * (size_t)*pitch +
+                                   (size_t)src->x * (size_t)bpp;
+
+        /* Avoid the slow C fallback in this per-frame compositor. */
+        if ( ((uintptr_t)src_origin & 3) || ((uintptr_t)data->scale_scratch_vir & 3) ||
+             (((uint32_t)*pitch) & 3) || (dst_stride & 3) ||
+             ((uint32_t)framebuffer_width > DOWNSCALE_AREA_MAX_DW) ) {
+            if (!data->downscale_unsupported_warned) {
+                MMIYOO_LOG_WARN("MMIYOO_TryDownscaleCompositeCopy: misaligned/oversized input would hit the slow C downscale fallback (src=%p pitch=%d dst_stride=%u fb_w=%d), dropping draw instead",
+                                (void *)src_origin, *pitch, dst_stride, framebuffer_width);
+                data->downscale_unsupported_warned = SDL_TRUE;
+            }
+            return SDL_FALSE;
+        }
+
+        downscale_func((void *)src_origin, data->scale_scratch_vir,
+                       (uint32_t)src->w, (uint32_t)src->h,
+                       (uint32_t)*pitch, dst_stride,
+                       (uint32_t)framebuffer_width, (uint32_t)framebuffer_height);
+    }
+
+    dst->x = 0;
+    dst->y = 0;
+    dst->w = framebuffer_width;
+    dst->h = framebuffer_height;
+    src->x = 0;
+    src->y = 0;
+    src->w = framebuffer_width;
+    src->h = framebuffer_height;
+
+    *pixels = data->scale_scratch_vir;
+    *pitch = (int)dst_stride;
+    *src_phy = data->scale_scratch_phy;
+
+    return SDL_TRUE;
+}
+
 /* Software integer-scales into a letterboxed scratch buffer for an unscaled GFX_Copy present; returns SDL_FALSE if scaling doesn't apply. */
 static SDL_bool
 MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
@@ -2256,6 +2369,7 @@ int My_QueueCopy(SDL_Renderer *renderer,
     MMIYOO_TextureData *src_texture_data;
     MMIYOO_TextureData *dst_texture_data;
     SDL_bool used_integer_scale = SDL_FALSE;
+    SDL_bool used_downscale = SDL_FALSE;
     int pitch = 0;
     MI_PHY src_phy = 0;
     int copy_result;
@@ -2340,12 +2454,30 @@ int My_QueueCopy(SDL_Renderer *renderer,
     effective_rotation = MMIYOO_AddRotations(base_rotation, extra_rotation);
     mirror = MMIYOO_FlipToMirror(flip);
 
-    /* Core-content software integer-scale; only applies to the default/window target, see MMIYOO_TryIntegerScaleCopy. */
-    if (!data->is_target_texture && extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
-        used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
-                                                          blend_mode, &pixels, &pitch, &src_phy);
-        if (!used_integer_scale) {
-            MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
+    if (!data->is_target_texture) {
+        int framebuffer_width = MMIYOO_GetFramebufferWidth(data);
+        int framebuffer_height = MMIYOO_GetFramebufferHeight(data);
+
+        if (texture->w > framebuffer_width || texture->h > framebuffer_height) {
+            /* Oversized render-target texture composited to the screen: the
+             * ROTATE_180 path below hangs MI_GFX on a source larger than the
+             * panel (see WHERE3.md). Downscale to panel size first so
+             * GFX_Copy never sees the oversized+rotated combination. */
+            used_downscale = MMIYOO_TryDownscaleCompositeCopy(data, texture, src_texture_data, &src, &dst,
+                                                                blend_mode, &pixels, &pitch, &src_phy);
+            if (!used_downscale) {
+                /* Degenerate/unsupported input already logged once inside
+                 * MMIYOO_TryDownscaleCompositeCopy -- never fall through to
+                 * GFX_Copy with the untouched oversized source. */
+                return 0;
+            }
+        } else if (extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
+            /* Core-content software integer-scale; only applies to the default/window target, see MMIYOO_TryIntegerScaleCopy. */
+            used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
+                                                              blend_mode, &pixels, &pitch, &src_phy);
+            if (!used_integer_scale) {
+                MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
+            }
         }
     }
 
@@ -2387,7 +2519,7 @@ int My_QueueCopy(SDL_Renderer *renderer,
         }
     }
 
-    if (src_texture_data && !used_integer_scale) {
+    if (src_texture_data && !used_integer_scale && !used_downscale) {
         src_phy = src_texture_data->phyAddr;
     }
 
@@ -3482,20 +3614,9 @@ SDL_RenderDriver MMIYOO_RenderDriver = {
             [7] = SDL_PIXELFORMAT_ARGB4444,
             [8] = SDL_PIXELFORMAT_RGBA4444,
         },
-        /* Matches the real panel resolution (640x480). The previous 800x600
-         * value had no basis in any documented MI_GFX hardware constraint
-         * (a 2D blit engine, not a sampler-bound 3D texture unit) and was
-         * rejecting RetroArch's font atlas outright. A larger 2048x2048
-         * bound was tried and confirmed to let some UI elements render at
-         * an unexpectedly large/oversized size (suspected of causing the
-         * "massive FPS-counter texture" regression) -- 640x480 is the
-         * conservative middle ground: still well above the old 800x600's
-         * failure case for a same-panel-size atlas, without opening the
-         * door to arbitrarily large textures. Revisit with real on-device
-         * measurement of the actual MI_GFX ceiling if a genuinely
-         * larger-than-panel texture is ever legitimately needed. */
-        .max_texture_width = 640,
-        .max_texture_height = 480,
+        /* Allows an oversized (up to 800x600) render target; MMIYOO_TryDownscaleCompositeCopy handles the composite. */
+        .max_texture_width = 800,
+        .max_texture_height = 600,
     }
 };
 
