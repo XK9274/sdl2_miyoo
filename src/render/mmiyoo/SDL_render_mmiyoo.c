@@ -2207,10 +2207,15 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
             return SDL_FALSE;
         }
 
+        /* Keep the CPU/GFX handoff cache-coherent across both MI_SYS buffers. */
+        MI_SYS_FlushInvCache((void *)src_origin, (MI_U32)((size_t)src->h * (size_t)*pitch));
+
         downscale_func((void *)src_origin, data->scale_scratch_vir,
                        (uint32_t)src->w, (uint32_t)src->h,
                        (uint32_t)*pitch, dst_stride,
                        (uint32_t)framebuffer_width, (uint32_t)framebuffer_height);
+
+        MI_SYS_FlushInvCache(data->scale_scratch_vir, (MI_U32)required_size);
     }
 
     dst->x = 0;
