@@ -1690,7 +1690,7 @@ static int MMIYOO_QueueDrawLines(SDL_Renderer *renderer, SDL_RenderCommand *cmd,
         return -1;
     }
 
-    SDL_memcpy(verts, points, count * sizeof(SDL_FPoint));
+    neon_memcpy(verts, points, count * sizeof(SDL_FPoint));
     cmd->data.draw.count = count;
 
     return 0;
@@ -1956,7 +1956,7 @@ static int MMIYOO_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd, SDL_
     cmd->data.draw.count = 1;
 
     verts = (SDL_Rect *)queue_data;
-    SDL_memcpy(&verts[0], srcrect, sizeof(SDL_Rect));
+    neon_memcpy(&verts[0], srcrect, sizeof(SDL_Rect));
     verts[1].x = (int)SDL_floorf(dstrect->x);
     verts[1].y = (int)SDL_floorf(dstrect->y);
     verts[1].w = (int)SDL_floorf(dstrect->w);
@@ -1970,7 +1970,7 @@ static int MMIYOO_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd, SDL_
     }
 
     queued_surface = (MI_GFX_Surface_t *)(queue_data + 2 * sizeof(SDL_Rect));
-    SDL_memcpy(queued_surface, &data->current_target_surface, sizeof(MI_GFX_Surface_t));
+    neon_memcpy(queued_surface, &data->current_target_surface, sizeof(MI_GFX_Surface_t));
 
     queued_is_target_texture = (SDL_bool *)(queue_data + 2 * sizeof(SDL_Rect) + sizeof(MI_GFX_Surface_t));
     *queued_is_target_texture = data->is_target_texture;

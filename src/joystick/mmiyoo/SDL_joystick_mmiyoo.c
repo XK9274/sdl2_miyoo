@@ -29,6 +29,7 @@
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
 #include "SDL_joystick.h"
+#include "neon.h"
 #include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../SDL_sysjoystick.h"
 #include "../SDL_joystick_c.h"
@@ -81,7 +82,7 @@ static SDL_JoystickGUID MMIYOO_JoystickGetDeviceGUID(int device_index)
     SDL_JoystickGUID guid;
     const char *name = MMIYOO_JoystickGetDeviceName(device_index);
     SDL_zero(guid);
-    SDL_memcpy(&guid, name, SDL_min(sizeof(guid), SDL_strlen(name)));
+    neon_memcpy(&guid, name, SDL_min(sizeof(guid), SDL_strlen(name)));
     return guid;
 }
 
