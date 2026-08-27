@@ -47,6 +47,9 @@
 #include "SDL_timer.h"
 #include "neon.h"
 
+#define MMIYOO_SYS_ALIGNMENT 4096u
+#define MMIYOO_ALIGN_SYS(value) (((value) + MMIYOO_SYS_ALIGNMENT - 1u) & ~(MMIYOO_SYS_ALIGNMENT - 1u))
+
 
 typedef struct MMIYOO_RenderData MMIYOO_RenderData;
 
@@ -54,6 +57,27 @@ static SDL_bool g_warned_copyex_angle = SDL_FALSE;
 
 static SDL_bool mmiyoo_debug_verbose = SDL_FALSE;
 static int mmiyoo_texture_live_count = 0;
+
+static void
+MMIYOO_FlushInvCacheRange(void *address, size_t size)
+{
+    uintptr_t start;
+    uintptr_t end;
+    uintptr_t aligned_start;
+    uintptr_t aligned_end;
+
+    if (!address || !size) {
+        return;
+    }
+
+    start = (uintptr_t)address;
+    end = start + size;
+    aligned_start = start & ~(uintptr_t)(MMIYOO_SYS_ALIGNMENT - 1u);
+    aligned_end = (end + MMIYOO_SYS_ALIGNMENT - 1u) &
+                  ~(uintptr_t)(MMIYOO_SYS_ALIGNMENT - 1u);
+    MI_SYS_FlushInvCache((void *)aligned_start,
+                         (MI_U32)(aligned_end - aligned_start));
+}
 
 #define MMIYOO_VERBOSE_LOG(fmt, ...)                          \
     do {                                                      \
@@ -1394,7 +1418,7 @@ static int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 
     mmiyoo_texture->size = mmiyoo_texture->height * mmiyoo_texture->pitch;
 
-    mmiyoo_texture->size = (mmiyoo_texture->size + 63) & ~63;
+    mmiyoo_texture->size = MMIYOO_ALIGN_SYS(mmiyoo_texture->size);
         
     mmiyoo_texture->uses_msys_memory = SDL_TRUE;
 
@@ -1516,7 +1540,7 @@ static int MMIYOO_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture, co
 
         if (mmiyoo_texture->uses_msys_memory) {
             size_t flush_size = (size_t)rect->h * dst_pitch;
-            MI_SYS_FlushInvCache((Uint8*)mmiyoo_texture->virAddr + rect->y * dst_pitch, flush_size);
+            MMIYOO_FlushInvCacheRange((Uint8*)mmiyoo_texture->virAddr + rect->y * dst_pitch, flush_size);
         }
     } else {
         Uint8 *dst_row;
@@ -1532,10 +1556,9 @@ static int MMIYOO_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture, co
             src_row += pitch;
         }
 
-        // Cache flush optimization: only flush modified region, not entire texture
         if (mmiyoo_texture->uses_msys_memory) {
             size_t modified_size = (size_t)texture->h * dst_pitch;
-            MI_SYS_FlushInvCache(mmiyoo_texture->virAddr, modified_size);
+            MMIYOO_FlushInvCacheRange(mmiyoo_texture->virAddr, modified_size);
         }
     }
 
@@ -2091,6 +2114,8 @@ MMIYOO_EnsureScaleScratch(MMIYOO_RenderData *data, unsigned int required_size)
     MI_PHY new_phy = 0;
     void *new_vir = NULL;
 
+    required_size = MMIYOO_ALIGN_SYS(required_size);
+
     if (data->scale_scratch_vir && data->scale_scratch_alloc_size >= required_size) {
         return SDL_TRUE;
     }
@@ -2136,13 +2161,8 @@ MMIYOO_PickDownscaleFunc(unsigned int bytes_per_pixel)
     return NULL;
 }
 
-/* Downscales an oversized render-target texture into a panel-sized scratch
- * buffer before it reaches the rotated screen-composite blit that hangs
- * MI_GFX on an oversized source (see My_QueueCopy's base_rotation). Mirrors
- * MMIYOO_TryIntegerScaleCopy's shape/scratch-buffer reuse, opposite
- * direction. Returns SDL_FALSE for degenerate/unsupported input; the caller
- * must skip the draw entirely rather than fall through to GFX_Copy with the
- * untouched oversized source. */
+/* Downscales an oversized render-target texture into a framebuffer-sized
+ * scratch buffer. Returns SDL_FALSE when the input is unsupported. */
 static SDL_bool
 MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                   MMIYOO_TextureData *src_texture_data,
@@ -2184,7 +2204,7 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     dst_stride = (unsigned int)(framebuffer_width * (int)bpp);
     dst_stride = (dst_stride + 15) & ~15u;
     required_size = dst_stride * (unsigned int)framebuffer_height;
-    required_size = (required_size + 63) & ~63u;
+    required_size = MMIYOO_ALIGN_SYS(required_size);
 
     if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
         return SDL_FALSE;
@@ -2208,14 +2228,15 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
         }
 
         /* Keep the CPU/GFX handoff cache-coherent across both MI_SYS buffers. */
-        MI_SYS_FlushInvCache((void *)src_origin, (MI_U32)((size_t)src->h * (size_t)*pitch));
+        MMIYOO_FlushInvCacheRange((void *)src_origin,
+                                  (size_t)src->h * (size_t)*pitch);
 
         downscale_func((void *)src_origin, data->scale_scratch_vir,
                        (uint32_t)src->w, (uint32_t)src->h,
                        (uint32_t)*pitch, dst_stride,
                        (uint32_t)framebuffer_width, (uint32_t)framebuffer_height);
 
-        MI_SYS_FlushInvCache(data->scale_scratch_vir, (MI_U32)required_size);
+        MMIYOO_FlushInvCacheRange(data->scale_scratch_vir, required_size);
     }
 
     dst->x = 0;
@@ -2288,7 +2309,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     dst_stride = (unsigned int)(scaled_w * (int)bpp);
     dst_stride = (dst_stride + 15) & ~15u;
     required_size = dst_stride * (unsigned int)scaled_h;
-    required_size = (required_size + 63) & ~63u;
+    required_size = MMIYOO_ALIGN_SYS(required_size);
 
     if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
         return SDL_FALSE;
