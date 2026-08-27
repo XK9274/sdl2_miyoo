@@ -1102,6 +1102,11 @@ MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
         original_dst.x += data->viewport.x;
         original_dst.y += data->viewport.y;
         base_clip = data->viewport;
+
+        /* Viewport can exceed the real target bounds; never clip past them. */
+        if (!SDL_IntersectRect(&base_clip, &target_bounds, &base_clip)) {
+            return SDL_FALSE;
+        }
     }
 
     if (!SDL_IntersectRect(&original_dst, &base_clip, &final_dst)) {
