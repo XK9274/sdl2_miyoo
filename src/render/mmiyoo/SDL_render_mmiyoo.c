@@ -2031,54 +2031,54 @@ MMIYOO_ClampVerticalMul(int raw)
 }
 
 static MMIYOO_NeonScaleFunc
-MMIYOO_PickScaleFunc(int xmul, int ymul, unsigned int bytes_per_pixel)
+MMIYOO_PickScaleFunc(int xmul, int ymul, unsigned int bytes_per_pixel, SDL_bool neon_safe)
 {
     if (bytes_per_pixel == 2) {
         switch (xmul) {
             case 1:
                 switch (ymul) {
-                    case 1: return (MMIYOO_NeonScaleFunc)scale1x1_n16;
-                    case 2: return (MMIYOO_NeonScaleFunc)scale1x2_n16;
-                    case 3: return (MMIYOO_NeonScaleFunc)scale1x3_n16;
-                    default: return (MMIYOO_NeonScaleFunc)scale1x4_n16;
+                    case 1: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x1_n16 : scale1x1_c16);
+                    case 2: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x2_n16 : scale1x2_c16);
+                    case 3: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x3_n16 : scale1x3_c16);
+                    default: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x4_n16 : scale1x4_c16);
                 }
             case 2:
                 switch (ymul) {
-                    case 1: return (MMIYOO_NeonScaleFunc)scale2x1_n16;
-                    case 2: return (MMIYOO_NeonScaleFunc)scale2x2_n16;
-                    case 3: return (MMIYOO_NeonScaleFunc)scale2x3_n16;
-                    default: return (MMIYOO_NeonScaleFunc)scale2x4_n16;
+                    case 1: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x1_n16 : scale2x1_c16);
+                    case 2: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x2_n16 : scale2x2_c16);
+                    case 3: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x3_n16 : scale2x3_c16);
+                    default: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x4_n16 : scale2x4_c16);
                 }
             default:
                 switch (ymul) {
-                    case 1: return (MMIYOO_NeonScaleFunc)scale4x1_n16;
-                    case 2: return (MMIYOO_NeonScaleFunc)scale4x2_n16;
-                    case 3: return (MMIYOO_NeonScaleFunc)scale4x3_n16;
-                    default: return (MMIYOO_NeonScaleFunc)scale4x4_n16;
+                    case 1: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x1_n16 : scale4x1_c16);
+                    case 2: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x2_n16 : scale4x2_c16);
+                    case 3: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x3_n16 : scale4x3_c16);
+                    default: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x4_n16 : scale4x4_c16);
                 }
         }
     } else {
         switch (xmul) {
             case 1:
                 switch (ymul) {
-                    case 1: return (MMIYOO_NeonScaleFunc)scale1x1_n32;
-                    case 2: return (MMIYOO_NeonScaleFunc)scale1x2_n32;
-                    case 3: return (MMIYOO_NeonScaleFunc)scale1x3_n32;
-                    default: return (MMIYOO_NeonScaleFunc)scale1x4_n32;
+                    case 1: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x1_n32 : scale1x1_c32);
+                    case 2: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x2_n32 : scale1x2_c32);
+                    case 3: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x3_n32 : scale1x3_c32);
+                    default: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale1x4_n32 : scale1x4_c32);
                 }
             case 2:
                 switch (ymul) {
-                    case 1: return (MMIYOO_NeonScaleFunc)scale2x1_n32;
-                    case 2: return (MMIYOO_NeonScaleFunc)scale2x2_n32;
-                    case 3: return (MMIYOO_NeonScaleFunc)scale2x3_n32;
-                    default: return (MMIYOO_NeonScaleFunc)scale2x4_n32;
+                    case 1: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x1_n32 : scale2x1_c32);
+                    case 2: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x2_n32 : scale2x2_c32);
+                    case 3: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x3_n32 : scale2x3_c32);
+                    default: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale2x4_n32 : scale2x4_c32);
                 }
             default:
                 switch (ymul) {
-                    case 1: return (MMIYOO_NeonScaleFunc)scale4x1_n32;
-                    case 2: return (MMIYOO_NeonScaleFunc)scale4x2_n32;
-                    case 3: return (MMIYOO_NeonScaleFunc)scale4x3_n32;
-                    default: return (MMIYOO_NeonScaleFunc)scale4x4_n32;
+                    case 1: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x1_n32 : scale4x1_c32);
+                    case 2: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x2_n32 : scale4x2_c32);
+                    case 3: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x3_n32 : scale4x3_c32);
+                    default: return (MMIYOO_NeonScaleFunc)(neon_safe ? scale4x4_n32 : scale4x4_c32);
                 }
         }
     }
@@ -2247,6 +2247,8 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     unsigned int dst_stride;
     unsigned int required_size;
     MMIYOO_NeonScaleFunc scale_func;
+    const Uint8 *src_origin;
+    SDL_bool neon_safe;
     unsigned int bpp;
 
     if (!data->integer_scale_enabled) {
@@ -2292,16 +2294,23 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
         return SDL_FALSE;
     }
 
-    scale_func = MMIYOO_PickScaleFunc(xmul, ymul, bpp);
-    {
-        /* src->x/src->y is a real crop offset into a possibly-larger texture. */
-        const Uint8 *src_origin = (const Uint8 *)*pixels +
-                                   (size_t)src->y * (size_t)*pitch +
-                                   (size_t)src->x * (size_t)bpp;
-        scale_func((void *)src_origin, data->scale_scratch_vir,
-                   (uint32_t)src->w, (uint32_t)src->h,
-                   (uint32_t)*pitch, dst_stride);
-    }
+    /* TODO: add an alignment-aware 16bpp NEON path once odd-pixel crops can
+     * be handled without falling back to the C scaler. */
+    /* The fixed-ratio NEON kernels require 4-byte aligned source/destination
+     * addresses and strides. In particular, a clipped 16bpp source with an
+     * odd X offset is only 2-byte aligned. Use the corresponding C kernel
+     * for that case rather than issuing an unsafe NEON load/store sequence. */
+    src_origin = (const Uint8 *)*pixels +
+                 (size_t)src->y * (size_t)*pitch +
+                 (size_t)src->x * (size_t)bpp;
+    neon_safe = (((uintptr_t)src_origin & 3) == 0 &&
+                 ((uintptr_t)data->scale_scratch_vir & 3) == 0 &&
+                 (((uint32_t)*pitch & 3) == 0) &&
+                 ((dst_stride & 3) == 0));
+    scale_func = MMIYOO_PickScaleFunc(xmul, ymul, bpp, neon_safe);
+    scale_func((void *)src_origin, data->scale_scratch_vir,
+               (uint32_t)src->w, (uint32_t)src->h,
+               (uint32_t)*pitch, dst_stride);
 
     dst->x += (dst->w - scaled_w) / 2;
     dst->y += (dst->h - scaled_h) / 2;
