@@ -2166,14 +2166,76 @@ MMIYOO_PickDownscaleFunc(unsigned int bytes_per_pixel)
     return NULL;
 }
 
-/* Downscales an oversized render-target texture into a framebuffer-sized
- * scratch buffer. Returns SDL_FALSE when the input is unsupported. */
+/* Composites an oversized render-target texture to the screen entirely in
+ * hardware: MI_GFX_BitBlit scales whenever its source and destination
+ * rects differ in size (GFX - SigmaStarDocs.txt), so one blit does the
+ * downscale, rotation, and composite together -- no CPU/NEON pass, no
+ * scratch buffer. dst is always the full panel here, which is already its
+ * own 180-rotation (no hw_dst position flip needed, unlike a partial-rect
+ * screen draw). The original "hangs MI_GFX on an oversized rotated
+ * source" attribution (see WHERE3.md) predates the viewport-clamp fix
+ * that turned out to be the real cause; a resolution matrix up to
+ * 1920x1080 with this exact call shape (dev-tools/downscale-bench-probe)
+ * ran clean, faster than the NEON path at every size tested. */
+static SDL_bool
+MMIYOO_TryHardwareScaleComposite(MMIYOO_RenderData *data, MMIYOO_TextureData *src_texture_data,
+                                  const SDL_Rect *src, int framebuffer_width, int framebuffer_height,
+                                  MI_GFX_Rotate_e rotate, MI_GFX_Mirror_e mirror)
+{
+    MI_GFX_Surface_t src_surf;
+    MI_GFX_Rect_t src_rect, dst_rect;
+    MI_GFX_Opt_t opt;
+    MI_S32 result;
+    MI_U16 fence;
+
+    memset(&src_surf, 0, sizeof(src_surf));
+    src_surf.phyAddr = src_texture_data->phyAddr;
+    src_surf.eColorFmt = src_texture_data->mi_format;
+    src_surf.u32Width = (MI_U32)src->w;
+    src_surf.u32Height = (MI_U32)src->h;
+    src_surf.u32Stride = src_texture_data->pitch;
+
+    src_rect.s32Xpos = src->x;
+    src_rect.s32Ypos = src->y;
+    src_rect.u32Width = (MI_U32)src->w;
+    src_rect.u32Height = (MI_U32)src->h;
+
+    dst_rect.s32Xpos = 0;
+    dst_rect.s32Ypos = 0;
+    dst_rect.u32Width = (MI_U32)framebuffer_width;
+    dst_rect.u32Height = (MI_U32)framebuffer_height;
+
+    memset(&opt, 0, sizeof(opt));
+    opt.eRotate = rotate;
+    opt.eMirror = mirror;
+    opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+    opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
+    opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
+    opt.stClipRect = dst_rect;
+
+    result = MI_GFX_BitBlit(&src_surf, &src_rect, &data->current_target_surface, &dst_rect, &opt, &fence);
+    if (result != MI_SUCCESS) {
+        MMIYOO_LOG_WARN("MMIYOO_TryHardwareScaleComposite: MI_GFX_BitBlit failed (result=0x%x), falling back to NEON",
+                        result);
+        return SDL_FALSE;
+    }
+    GFX_AddTextureFence(fence);
+    return SDL_TRUE;
+}
+
+/* Tries the hardware scale above first; falls back to the NEON downscale
+ * into a framebuffer-sized scratch buffer if that fails. *handled_directly
+ * is set when the hardware path already completed the composite itself --
+ * the caller must not issue its own GFX_Copy in that case. Returns
+ * SDL_FALSE only when the input is unsupported by either path. */
 static SDL_bool
 MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                   MMIYOO_TextureData *src_texture_data,
                                   SDL_Rect *src, SDL_Rect *dst,
                                   SDL_BlendMode blend_mode,
-                                  const void **pixels, int *pitch, MI_PHY *src_phy)
+                                  MI_GFX_Rotate_e rotate, MI_GFX_Mirror_e mirror,
+                                  const void **pixels, int *pitch, MI_PHY *src_phy,
+                                  SDL_bool *handled_directly)
 {
     int framebuffer_width;
     int framebuffer_height;
@@ -2183,6 +2245,7 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     MMIYOO_NeonDownscaleFunc downscale_func;
 
     (void)texture;
+    *handled_directly = SDL_FALSE;
 
     if (blend_mode != SDL_BLENDMODE_NONE) {
         return SDL_FALSE;
@@ -2191,13 +2254,31 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
         return SDL_FALSE;
     }
 
+    framebuffer_width = MMIYOO_GetFramebufferWidth(data);
+    framebuffer_height = MMIYOO_GetFramebufferHeight(data);
+    if (framebuffer_width <= 0 || framebuffer_height <= 0) {
+        return SDL_FALSE;
+    }
+
+    /* The source here is a render-target texture the game has been drawing
+     * into all frame via GFX BitBlit/QuickFill/DrawLine, each of which only
+     * queues a fence (GFX_AddTextureFence) without waiting on it. The
+     * hardware-scale path below reads it via another GFX op -- safe, same
+     * hardware queue, issue-ordered -- but the NEON fallback reads it on
+     * the CPU and needs this flush first. Flush unconditionally so both
+     * paths are covered without knowing in advance which one will run. */
+    GFX_FlushTextureFences();
+
+    if (MMIYOO_TryHardwareScaleComposite(data, src_texture_data, src, framebuffer_width, framebuffer_height,
+                                          rotate, mirror)) {
+        *handled_directly = SDL_TRUE;
+        return SDL_TRUE;
+    }
+
     bpp = src_texture_data->bytes_per_pixel;
     downscale_func = MMIYOO_PickDownscaleFunc(bpp);
 
-    framebuffer_width = MMIYOO_GetFramebufferWidth(data);
-    framebuffer_height = MMIYOO_GetFramebufferHeight(data);
-
-    if (!downscale_func || framebuffer_width <= 0 || framebuffer_height <= 0) {
+    if (!downscale_func) {
         if (!data->downscale_unsupported_warned) {
             MMIYOO_LOG_WARN("MMIYOO_TryDownscaleCompositeCopy: unsupported oversized composite (bpp=%u src=%dx%d fb=%dx%d), dropping draw",
                             bpp, src->w, src->h, framebuffer_width, framebuffer_height);
@@ -2214,14 +2295,6 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
         return SDL_FALSE;
     }
-
-    /* The source here is a render-target texture the game has been drawing
-     * into all frame via GFX BitBlit/QuickFill/DrawLine, each of which only
-     * queues a fence (GFX_AddTextureFence) without waiting on it. Without
-     * this flush the NEON downscale below reads src_origin on the CPU while
-     * the GPU may still be mid-write to that same memory -- a torn-frame
-     * race that gets worse the faster frames are produced. */
-    GFX_FlushTextureFences();
 
     {
         const Uint8 *src_origin = (const Uint8 *)*pixels +
@@ -2507,16 +2580,23 @@ int My_QueueCopy(SDL_Renderer *renderer,
         int framebuffer_height = MMIYOO_GetFramebufferHeight(data);
 
         if (texture->w > framebuffer_width || texture->h > framebuffer_height) {
-            /* Oversized render-target texture composited to the screen: the
-             * ROTATE_180 path below hangs MI_GFX on a source larger than the
-             * panel (see WHERE3.md). Downscale to panel size first so
-             * GFX_Copy never sees the oversized+rotated combination. */
+            /* Oversized render-target texture composited to the screen:
+             * MMIYOO_TryDownscaleCompositeCopy tries a single hardware
+             * MI_GFX_BitBlit scale first, falling back to NEON only if
+             * that fails. */
+            SDL_bool handled_directly = SDL_FALSE;
             used_downscale = MMIYOO_TryDownscaleCompositeCopy(data, texture, src_texture_data, &src, &dst,
-                                                                blend_mode, &pixels, &pitch, &src_phy);
+                                                                blend_mode, effective_rotation, mirror,
+                                                                &pixels, &pitch, &src_phy, &handled_directly);
             if (!used_downscale) {
                 /* Degenerate/unsupported input already logged once inside
                  * MMIYOO_TryDownscaleCompositeCopy -- never fall through to
                  * GFX_Copy with the untouched oversized source. */
+                return 0;
+            }
+            if (handled_directly) {
+                /* Hardware path already issued and fenced its own BitBlit;
+                 * nothing left for the GFX_Copy call below to do. */
                 return 0;
             }
         } else if (extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
