@@ -2215,6 +2215,14 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
         return SDL_FALSE;
     }
 
+    /* The source here is a render-target texture the game has been drawing
+     * into all frame via GFX BitBlit/QuickFill/DrawLine, each of which only
+     * queues a fence (GFX_AddTextureFence) without waiting on it. Without
+     * this flush the NEON downscale below reads src_origin on the CPU while
+     * the GPU may still be mid-write to that same memory -- a torn-frame
+     * race that gets worse the faster frames are produced. */
+    GFX_FlushTextureFences();
+
     {
         const Uint8 *src_origin = (const Uint8 *)*pixels +
                                    (size_t)src->y * (size_t)*pitch +
