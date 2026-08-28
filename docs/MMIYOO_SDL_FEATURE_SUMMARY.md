@@ -10,7 +10,9 @@
 - `SDL_MMIYOO_GEOMETRY_QUICKPATH` -- opt into skipping the duplicate blit from a glyph quad's second identical textured triangle
 - `SDL_MMIYOO_FRAME_TIMING` -- log per-second frame timing, including command queue, present, blit count, and command-category breakdown
 - `SDL_MMIYOO_TEXTURE_POOL` -- enable/disable the bounded MI_SYS texture-memory reuse pool (default enabled)
-- `SDL_MMIYOO_TEXTURE_POOL_MAX_BYTES` -- cap the texture-memory reuse pool byte budget (default 2 MiB)
+- `SDL_MMIYOO_TEXTURE_POOL_MAX_BYTES` -- cap the texture-memory reuse pool byte budget (default 10 MiB)
+- `SDL_MMIYOO_INTEGER_SCALE` -- enable the default software integer upscaler for eligible core-content blits; set to `0` to disable
+- `SDL_MMIYOO_DEBUG_LOG` -- enable additional scaling and input diagnostics
 - `SDL_VIDEO_MMIYOO_SAVE_FRAMES` -- dump each presented frame to a BMP
 
 ## Miyoo-specific functions
@@ -38,7 +40,6 @@
 - Keyboard/joystick mode getters: `MMIYOO_IsKeyboardModeActive`, `MMIYOO_IsJoystickModeActive`
 - VSync mode getters: `MMIYOO_GetVSyncMode`, `MMIYOO_ResolvePresentVSyncMode`
 - Window focus restore: `MMIYOO_RaiseWindow`
-- Mouse bounds setter: `MMIYOO_SetMouseBounds`
 - Video driver availability check (explicit `SDL_VIDEODRIVER=mmiyoo` override, then falls back to `MMIYOO_ProbeHardware`): `MMIYOO_Available`
 - Real hardware probe for auto-detection (checks `/dev/mi_sys` and `/customer/app/MainUI` exist): `MMIYOO_ProbeHardware`
 - Framebuffer clear: `FB_Clear`
@@ -61,9 +62,9 @@
 
 **Render** (`SDL_Renderer`, driver name `MMIYOO`): `CreateRenderer`, `WindowEvent`, `CreateTexture`, `UpdateTexture`, `LockTexture`, `UnlockTexture`, `SetTextureScaleMode` (no-op), `SetRenderTarget`, `QueueSetViewport`, `QueueSetDrawColor`, `QueueDrawPoints`, `QueueDrawLines`, `QueueGeometry`, `QueueFillRects`, `QueueCopy`, `QueueCopyEx`, `RunCommandQueue`, `RenderPresent`, `DestroyTexture`, `DestroyRenderer`, `SetVSync`
 
-- Supported render paths: hardware `QuickFill` for clears/fills/axis-aligned line batches and eligible opaque 1x1-texture geometry fills; `MI_GFX_BitBlit` for texture copy/copy-ex with blend, color modulation, clipping, orthogonal rotation, and flip; software triangle rasterization for untextured geometry; textured geometry as one bounded hardware blit per triangle, with optional glyph-quad duplicate blit skip via `SDL_MMIYOO_GEOMETRY_QUICKPATH`.
+- Supported render paths: hardware `QuickFill` for clears/fills/axis-aligned line batches and eligible opaque 1x1-texture geometry fills; `MI_GFX_BitBlit` for texture copy/copy-ex with blend, color modulation, clipping, orthogonal rotation, and flip; software triangle rasterization for untextured geometry; textured geometry as one bounded hardware blit per triangle, with optional glyph-quad duplicate blit skip via `SDL_MMIYOO_GEOMETRY_QUICKPATH`; eligible integer upscaling, stretch-fill, and oversized render-target downscale-composite paths.
 - Texture allocation: `CreateTexture` uses a bounded MI_SYS MMA reuse pool to reduce allocation churn; the pool can be disabled or capped with the texture-pool hints.
-- Not supported: `RenderReadPixels`
+- Readback: `RenderReadPixels` supports render-target textures with CPU-mapped storage; the default framebuffer target remains unsupported because its runtime format is not verified.
 
 **Audio** (`SDL_AudioDriverImpl`, driver name `MMIYOO`): `OpenDevice`, `WaitDevice`, `PlayDevice`, `GetDeviceBuf`, `CloseDevice`
 
