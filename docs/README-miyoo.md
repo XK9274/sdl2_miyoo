@@ -88,6 +88,39 @@ Runtime environment variables
 | `SDL_MMIYOO_DEBUG` | off | Raise the render-driver log category to debug priority. |
 | `SDL_MMIYOO_DEBUG_VERBOSE` | off | Enable verbose render-driver debug logging (implied by `SDL_MMIYOO_DEBUG`). |
 
+Oversized render-target composite
+----------------------------------
+
+When an app's render-target texture is larger than the physical panel
+(640x480 -- e.g. a game rendering at its own native resolution into an
+offscreen target, then compositing that to the screen each frame),
+`MMIYOO_TryDownscaleCompositeCopy` (`src/render/mmiyoo/SDL_render_mmiyoo.c`)
+tries `MI_GFX_BitBlit`'s own implicit hardware scale first -- one blit does
+the downscale, rotation, and composite together, no CPU/NEON pass and no
+scratch buffer. It falls back to a NEON software downscale
+(`downscale_area_n32`, in `neon-arm-library-miyoo`) only if that hardware
+blit itself fails.
+
+Benchmarked with `dev-tools/downscale-bench-probe`
+([mm-buildbot](https://github.com/XK9274/mm-buildbot)) across a resolution
+matrix above the panel size, 150 frames per resolution/approach, timed from
+issue to `MI_GFX_WaitAllDone` fence completion:
+
+| Source resolution | Hardware scale (avg / min / max) | NEON fallback (avg / min / max) |
+|---|---|---|
+| 800x600   | 3.78 / 3.13 / 6.84 ms | 6.39 / 4.94 / 37.77 ms |
+| 1024x768  | 5.01 / 4.01 / 5.74 ms | 7.14 / 5.90 / 12.38 ms |
+| 1280x720  | 5.98 / 4.66 / 8.59 ms | 7.74 / 6.32 / 26.00 ms |
+| 1440x900  | 6.92 / 5.15 / 8.29 ms | 9.63 / 7.44 / 27.99 ms |
+| 1920x1080 | 8.97 / 4.95 / 10.54 ms | 12.61 / 10.25 / 38.88 ms |
+
+Hardware scale won at every resolution tested (roughly 1.4-1.7x faster than
+NEON), with zero `MI_ERR_GFX_DRV_FAIL_STRETCH` and zero hangs from 800x600
+through 1920x1080 (3x the panel's pixel area) -- no resolution ceiling
+turned up in this range. A plain C fallback (`downscale_area_c32`) was also
+benchmarked and was 9-20x slower than NEON at every size; it's no longer
+used anywhere in this path.
+
 Acknowledgements
 ----------------
 
