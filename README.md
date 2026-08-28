@@ -3,6 +3,10 @@
 
 https://www.libsdl.org/
 
+Miyoo Mini documentation:
+- [Miyoo Mini build and configuration guide](docs/README-miyoo.md) — cross-compilation, runtime hints, and build options.
+- [Miyoo SDL feature summary](docs/MMIYOO_SDL_FEATURE_SUMMARY.md) — driver features, controls, render paths, and environment settings.
+
 Simple DirectMedia Layer is a cross-platform development library designed
 to provide low level access to audio, keyboard, mouse, joystick, and graphics
 hardware via OpenGL and Direct3D. It is used by video playback software,
