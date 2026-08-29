@@ -1,6 +1,5 @@
 /*
   Customized version for Miyoo-Mini handheld.
-  Only tested under Miyoo-Mini stock OS (original firmware) with Parasyte compatible layer.
 
   Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
   Copyright (C) 2022-2022 Steward Fu <steward.fu@gmail.com>
