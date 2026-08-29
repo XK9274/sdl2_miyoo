@@ -109,8 +109,37 @@ MMIYOO_UpdatePresentVSyncFlag(SDL_Renderer *renderer, SDL_bool renderer_vsync_re
 void MMIYOO_RenderPresent(SDL_Renderer *renderer)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
-    MI_GFX_Surface_t target_surface_before = data->current_target_surface;
-    SDL_bool was_target_texture = data->is_target_texture;
+    MI_GFX_Surface_t target_surface_before;
+    SDL_bool was_target_texture;
+
+    if (!data->logical_size_applied) {
+        int window_w = 0;
+        int window_h = 0;
+
+        /* Deferred to first present, not done in MMIYOO_CreateRenderer:
+         * SDL only marks renderer->magic valid after CreateRenderer
+         * returns, so SDL_RenderSetLogicalSize (magic-guarded) would fail
+         * if called from inside it. By present time the command queue has
+         * already been flushed by SDL_RenderPresent, so calling back into
+         * SDL_RenderSetLogicalSize here is safe. */
+        data->logical_size_applied = SDL_TRUE;
+        SDL_GetWindowSize(renderer->window, &window_w, &window_h);
+
+        if (window_w > 0 && window_h > 0 &&
+            (window_w > data->framebuffer_width || window_h > data->framebuffer_height)) {
+            SDL_LogDebug(SDL_LOG_CATEGORY_RENDER,
+                         "SCALEDBG RenderPresent: window=%dx%d exceeds framebuffer=%dx%d, applying SDL_RenderSetLogicalSize",
+                         window_w, window_h, data->framebuffer_width, data->framebuffer_height);
+            if (SDL_RenderSetLogicalSize(renderer, window_w, window_h) != 0) {
+                SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                            "MMIYOO: SDL_RenderSetLogicalSize(%d,%d) failed: %s",
+                            window_w, window_h, SDL_GetError());
+            }
+        }
+    }
+
+    target_surface_before = data->current_target_surface;
+    was_target_texture = data->is_target_texture;
 
     SDL_LogDebug(SDL_LOG_CATEGORY_RENDER,
                  "MMIYOO_RenderPresent: targetTex=%d fb=%ux%u viewport=%dx%d at %d,%d",

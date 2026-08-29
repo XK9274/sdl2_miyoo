@@ -57,6 +57,19 @@ static void MMIYOO_WindowEvent(SDL_Renderer *renderer, const SDL_WindowEvent *ev
 {
 }
 
+static int MMIYOO_GetOutputSize(SDL_Renderer *renderer, int *w, int *h)
+{
+    MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
+
+    if (w) {
+        *w = MMIYOO_GetFramebufferWidth(data);
+    }
+    if (h) {
+        *h = MMIYOO_GetFramebufferHeight(data);
+    }
+    return 0;
+}
+
 static int MMIYOO_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
@@ -167,6 +180,7 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
     renderer->RunCommandQueue = MMIYOO_RunCommandQueue;
     renderer->RenderReadPixels = MMIYOO_RenderReadPixels;
     renderer->RenderPresent = MMIYOO_RenderPresent;
+    renderer->GetOutputSize = MMIYOO_GetOutputSize;
     renderer->DestroyTexture = MMIYOO_DestroyTexture;
     renderer->DestroyRenderer = MMIYOO_DestroyRenderer;
     renderer->SetVSync = MMIYOO_SetVSync;
