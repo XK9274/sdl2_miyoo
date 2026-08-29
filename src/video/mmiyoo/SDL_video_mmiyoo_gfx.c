@@ -101,10 +101,7 @@ static SDL_SpinLock g_mmiyoo_sys_lock = 0;
 static int g_mmiyoo_sys_refcount = 0;
 static int g_mmiyoo_gfx_refcount = 0;
 
-/* Real-linkage symbols compiled into SDL_render.c, always in the same
- * libSDL2-2.0.so.0. Declared extern here (as SDL_sysrender.h itself does)
- * so this src/video/ file can decompose composed blend modes without
- * pulling in the src/render/-internal header. */
+/* Real symbols in SDL_render.c, declared extern here as SDL_sysrender.h itself does. */
 extern SDL_BlendFactor SDL_GetBlendModeSrcColorFactor(SDL_BlendMode blendMode);
 extern SDL_BlendFactor SDL_GetBlendModeDstColorFactor(SDL_BlendMode blendMode);
 extern SDL_BlendOperation SDL_GetBlendModeColorOperation(SDL_BlendMode blendMode);
@@ -112,9 +109,7 @@ extern SDL_BlendFactor SDL_GetBlendModeSrcAlphaFactor(SDL_BlendMode blendMode);
 extern SDL_BlendFactor SDL_GetBlendModeDstAlphaFactor(SDL_BlendMode blendMode);
 extern SDL_BlendOperation SDL_GetBlendModeAlphaOperation(SDL_BlendMode blendMode);
 
-/* Latched once per process: whether a composed blend mode is representable
- * on this hardware is a static fact about that mode, not renderer state. */
-static SDL_bool g_warned_unsupported_compose = SDL_FALSE;
+static SDL_bool g_warned_unsupported_compose = SDL_FALSE; /* latched once per process */
 
 static void
 MMIYOO_WaitGFXIdle(void)
@@ -412,9 +407,7 @@ void FB_Clear(void)
 #endif
 }
 
-/* SDL_BlendFactor -> MI_GFX_DfbBldOp_e. MI_GFX's SRCALPHASAT/MAX have no
- * SDL_BlendFactor equivalent and are never produced here (MAX is only ever
- * returned as this switch's own unreachable-default sentinel). */
+/* SDL_BlendFactor -> MI_GFX_DfbBldOp_e; default is an unreachable sentinel. */
 static MI_GFX_DfbBldOp_e
 MMIYOO_SDLBlendFactorToDfbBldOp(SDL_BlendFactor factor)
 {
@@ -433,12 +426,7 @@ MMIYOO_SDLBlendFactorToDfbBldOp(SDL_BlendFactor factor)
     }
 }
 
-/* Decomposes a composed SDL_BlendMode and checks whether it fits MI_GFX's
- * single (eSrcDfbBldOp, eDstDfbBldOp) pair applied uniformly across all 4
- * channels with an implicit ADD combine -- the same tier of support SDL's
- * own OpenGL ES1 renderer documents. Returns SDL_FALSE (leaving *src_op/
- * *dst_op untouched) if the mode needs a non-ADD operation or mismatched
- * color-vs-alpha factors. */
+/* SDL_FALSE if blend_mode needs a non-ADD op or mismatched color/alpha factors -- MI_GFX has one factor pair for all 4 channels. */
 static SDL_bool
 MMIYOO_TryComposeBlendMode(SDL_BlendMode blend_mode, MI_GFX_DfbBldOp_e *src_op, MI_GFX_DfbBldOp_e *dst_op)
 {
