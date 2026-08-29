@@ -407,6 +407,15 @@ $(objects)/SDL_syslocale.lo: /workspace/sdl2/src/locale/unix/SDL_syslocale.c $(o
 $(objects)/SDL_mmiyoo.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
+$(objects)/SDL_mmiyoo_display.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_display.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_mmiyoo_input.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_input.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_mmiyoo_power.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_power.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
 $(objects)/SDL_audio_mmiyoo.lo: /workspace/sdl2/src/audio/mmiyoo/SDL_audio_mmiyoo.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
