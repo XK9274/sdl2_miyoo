@@ -191,6 +191,21 @@ $(objects)/SDL_shaders_d3d11.lo: /workspace/sdl2/src/render/direct3d11/SDL_shade
 $(objects)/SDL_render_mmiyoo.lo: /workspace/sdl2/src/render/mmiyoo/SDL_render_mmiyoo.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
+$(objects)/SDL_render_mmiyoo_commands.lo: /workspace/sdl2/src/render/mmiyoo/SDL_render_mmiyoo_commands.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_render_mmiyoo_geometry.lo: /workspace/sdl2/src/render/mmiyoo/SDL_render_mmiyoo_geometry.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_render_mmiyoo_present.lo: /workspace/sdl2/src/render/mmiyoo/SDL_render_mmiyoo_present.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_render_mmiyoo_scaling.lo: /workspace/sdl2/src/render/mmiyoo/SDL_render_mmiyoo_scaling.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_render_mmiyoo_texture.lo: /workspace/sdl2/src/render/mmiyoo/SDL_render_mmiyoo_texture.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
 $(objects)/SDL_render_gl.lo: /workspace/sdl2/src/render/opengl/SDL_render_gl.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
@@ -350,10 +365,19 @@ $(objects)/SDL_event_mmiyoo.lo: /workspace/sdl2/src/video/mmiyoo/SDL_event_mmiyo
 $(objects)/SDL_framebuffer_mmiyoo.lo: /workspace/sdl2/src/video/mmiyoo/SDL_framebuffer_mmiyoo.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
-$(objects)/SDL_opengles_mmiyoo.lo: /workspace/sdl2/src/video/mmiyoo/SDL_opengles_mmiyoo.c $(objects)/.created
+$(objects)/SDL_opengles_mmiyoo_context.lo: /workspace/sdl2/src/video/mmiyoo/SDL_opengles_mmiyoo_context.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_opengles_mmiyoo_swap.lo: /workspace/sdl2/src/video/mmiyoo/SDL_opengles_mmiyoo_swap.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
 $(objects)/SDL_video_mmiyoo.lo: /workspace/sdl2/src/video/mmiyoo/SDL_video_mmiyoo.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_video_mmiyoo_gfx.lo: /workspace/sdl2/src/video/mmiyoo/SDL_video_mmiyoo_gfx.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
+$(objects)/SDL_video_mmiyoo_present.lo: /workspace/sdl2/src/video/mmiyoo/SDL_video_mmiyoo_present.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
 $(objects)/SDL_sysloadso.lo: /workspace/sdl2/src/loadso/dlopen/SDL_sysloadso.c $(objects)/.created
