@@ -412,8 +412,9 @@ void FB_Clear(void)
 #endif
 }
 
-/* SDL_BlendFactor -> MI_GFX_DfbBldOp_e. MI_GFX's SRCALPHASAT/NONE/MAX have
- * no SDL_BlendFactor equivalent and are never produced here. */
+/* SDL_BlendFactor -> MI_GFX_DfbBldOp_e. MI_GFX's SRCALPHASAT/MAX have no
+ * SDL_BlendFactor equivalent and are never produced here (MAX is only ever
+ * returned as this switch's own unreachable-default sentinel). */
 static MI_GFX_DfbBldOp_e
 MMIYOO_SDLBlendFactorToDfbBldOp(SDL_BlendFactor factor)
 {
