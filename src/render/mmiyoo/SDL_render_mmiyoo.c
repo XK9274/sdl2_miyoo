@@ -109,8 +109,29 @@ static int MMIYOO_SetRenderTarget(SDL_Renderer *renderer, SDL_Texture *texture)
     /* Reset clip tracking when target changes to avoid stale rectangles */
     MMIYOO_UpdateClipState(data, SDL_FALSE, NULL);
     data->viewport_enabled = SDL_FALSE;
-    
+
     return 0;
+}
+
+/* Gates SDL_Set{Render,Texture}BlendMode for composed modes; mirrors GFX_Copy's own matching-factors/ADD-only check. */
+static SDL_bool MMIYOO_SupportsBlendMode(SDL_Renderer *renderer, SDL_BlendMode blendMode)
+{
+    SDL_BlendFactor srcColorFactor = SDL_GetBlendModeSrcColorFactor(blendMode);
+    SDL_BlendFactor dstColorFactor = SDL_GetBlendModeDstColorFactor(blendMode);
+    SDL_BlendOperation colorOperation = SDL_GetBlendModeColorOperation(blendMode);
+    SDL_BlendFactor srcAlphaFactor = SDL_GetBlendModeSrcAlphaFactor(blendMode);
+    SDL_BlendFactor dstAlphaFactor = SDL_GetBlendModeDstAlphaFactor(blendMode);
+    SDL_BlendOperation alphaOperation = SDL_GetBlendModeAlphaOperation(blendMode);
+
+    (void)renderer;
+
+    if (colorOperation != SDL_BLENDOPERATION_ADD || alphaOperation != SDL_BLENDOPERATION_ADD) {
+        return SDL_FALSE;
+    }
+    if (srcColorFactor != srcAlphaFactor || dstColorFactor != dstAlphaFactor) {
+        return SDL_FALSE;
+    }
+    return SDL_TRUE;
 }
 
 static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
@@ -184,6 +205,7 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
     renderer->DestroyTexture = MMIYOO_DestroyTexture;
     renderer->DestroyRenderer = MMIYOO_DestroyRenderer;
     renderer->SetVSync = MMIYOO_SetVSync;
+    renderer->SupportsBlendMode = MMIYOO_SupportsBlendMode;
     renderer->info = MMIYOO_RenderDriver.info;
     renderer->info.flags = (SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
     renderer->line_method = SDL_RENDERLINEMETHOD_LINES;
