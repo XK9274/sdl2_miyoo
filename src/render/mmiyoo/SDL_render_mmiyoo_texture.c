@@ -1,6 +1,4 @@
 /*
-  New translation unit created for the Miyoo-Mini SDL renderer/video split.
-
   Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
   Copyright (C) 2026-2026 XK9274 <xk.github@pm.me>
 
