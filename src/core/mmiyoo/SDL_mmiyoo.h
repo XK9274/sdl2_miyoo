@@ -78,40 +78,19 @@ typedef struct {
     Uint32 sdl_format;
 } MMIYOO_FramebufferInfo;
 
+/* --- SDL_mmiyoo.c: sysfs/file I/O utility, device/hardware identity --- */
 extern int MMIYOO_WriteSysfs(const char *path, const char *value, size_t length);
 extern SDL_bool MMIYOO_ReadIntFile(const char *path, int *value);
 
 extern MMIYOO_DeviceModel MMIYOO_GetDeviceModel(void);
 extern MMIYOO_CFW MMIYOO_GetCFW(void);
-extern Uint32 MMIYOO_KeycodeToButtonMask(int code);
 
 /* Real hardware probe for backend auto-detection (SDL_VIDEODRIVER unset).
  * Checks for /dev/mi_sys (Sigmastar board) and /customer/app/MainUI (Miyoo
  * firmware, any CFW) via existence checks only. */
 extern SDL_bool MMIYOO_ProbeHardware(void);
 
-extern void MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info);
-extern SDL_bool MMIYOO_GetFramebufferInfoFromFD(int fb_fd, MMIYOO_FramebufferInfo *info);
-
-extern SDL_bool MMIYOO_HasRumble(void);
-extern int MMIYOO_SetRumble(SDL_bool enabled);
-
-extern SDL_bool MMIYOO_GetBatteryPercent(int *percent);
-extern SDL_bool MMIYOO_IsCharging(SDL_bool *charging);
-
-/* Shared raw-input layer (single reader of /dev/input/event0), and the live,
- * app-switchable mode deciding whether the video backend's keyboard/mouse
- * emulation or the joystick backend is the one actually posting SDL events
- * from it. Unset hint defaults to joystick. */
-#define SDL_HINT_MMIYOO_INPUT_MODE "SDL_MMIYOO_INPUT_MODE"
-#define MMIYOO_INPUT_MODE_KEYBOARD "keyboard"
-#define MMIYOO_INPUT_MODE_JOYSTICK "joystick"
-
-extern void MMIYOO_InputInit(void);
-extern void MMIYOO_InputDeinit(void);
-extern Uint32 MMIYOO_GetKeypadBitmap(void);
-extern SDL_bool MMIYOO_IsKeyboardModeActive(void);
-extern SDL_bool MMIYOO_IsJoystickModeActive(void);
+/* --- SDL_mmiyoo_display.c: vsync-hint resolution, framebuffer-info probing --- */
 
 /* Present pacing. Unset/anything unrecognized = off. "strict" is read
  * once at FB_Init (locks in the /dev/l panning buffer layout); off/adaptive
@@ -130,6 +109,33 @@ extern MMIYOO_VSyncMode_e MMIYOO_GetVSyncMode(void);
 
 /* Like MMIYOO_GetVSyncMode(), but honors the live SDL_Renderer vsync request when the hint is unset instead of forcing off (mirrors SDL_HINT_RENDER_VSYNC's own precedence in SDL_render.c). */
 extern MMIYOO_VSyncMode_e MMIYOO_ResolvePresentVSyncMode(SDL_bool renderer_vsync_requested);
+
+extern void MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info);
+extern SDL_bool MMIYOO_GetFramebufferInfoFromFD(int fb_fd, MMIYOO_FramebufferInfo *info);
+
+/* --- SDL_mmiyoo_input.c: shared raw-input layer, keyboard/joystick mode --- */
+extern Uint32 MMIYOO_KeycodeToButtonMask(int code);
+
+/* Shared raw-input layer (single reader of /dev/input/event0), and the live,
+ * app-switchable mode deciding whether the video backend's keyboard/mouse
+ * emulation or the joystick backend is the one actually posting SDL events
+ * from it. Unset hint defaults to joystick. */
+#define SDL_HINT_MMIYOO_INPUT_MODE "SDL_MMIYOO_INPUT_MODE"
+#define MMIYOO_INPUT_MODE_KEYBOARD "keyboard"
+#define MMIYOO_INPUT_MODE_JOYSTICK "joystick"
+
+extern void MMIYOO_InputInit(void);
+extern void MMIYOO_InputDeinit(void);
+extern Uint32 MMIYOO_GetKeypadBitmap(void);
+extern SDL_bool MMIYOO_IsKeyboardModeActive(void);
+extern SDL_bool MMIYOO_IsJoystickModeActive(void);
+
+/* --- SDL_mmiyoo_power.c: rumble, battery/charging status --- */
+extern SDL_bool MMIYOO_HasRumble(void);
+extern int MMIYOO_SetRumble(SDL_bool enabled);
+
+extern SDL_bool MMIYOO_GetBatteryPercent(int *percent);
+extern SDL_bool MMIYOO_IsCharging(SDL_bool *charging);
 
 #endif /* SDL_mmiyoo_h_ */
 
