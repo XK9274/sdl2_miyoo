@@ -186,7 +186,7 @@ Vanilla had only six stub-level functions. The new backend adds a full render pi
 
 | Function | Description |
 |---|---|
-| `My_QueueCopy()` | Full-featured blit: rotation, flip, clip rect, blend mode, MI GFX or NEON fallback |
+| `MMIYOO_ExecuteCopyCommand()` | Full-featured blit: rotation, flip, clip rect, blend mode, MI GFX or NEON fallback |
 | `MMIYOO_AddRotations()` / `MMIYOO_RotationSwapsAxes()` | MI GFX rotation composition helpers |
 | `MMIYOO_FlipToMirror()` | Maps `SDL_RendererFlip` to `MI_GFX_Mirror_e` |
 
