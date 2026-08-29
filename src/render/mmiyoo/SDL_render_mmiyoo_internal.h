@@ -141,6 +141,11 @@ typedef struct MMIYOO_RenderData {
      * unsupported case (zero-size texture, non-32bpp format) so it logs once
      * instead of every frame. */
     SDL_bool downscale_unsupported_warned;
+
+    /* Set once SDL_RenderSetLogicalSize has been applied for this
+     * renderer's oversized window, so MMIYOO_RenderPresent doesn't retry
+     * it every frame. */
+    SDL_bool logical_size_applied;
 } MMIYOO_RenderData;
 
 typedef struct {
