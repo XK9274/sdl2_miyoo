@@ -51,10 +51,31 @@
 - GLES default profile config: `MMIYOO_GLES_DefaultProfileConfig`
 - GLES buffer-settings extension hook: `glUpdateBufferSettings`
 - GLES overlay buffer accessors (pbuffer present mode): `GFX_GetOverlayVirtual`, `GFX_GetOverlayPhysical`
-- Renderer copy helper: `My_QueueCopy`
+- Renderer copy-command executor: `MMIYOO_ExecuteCopyCommand` (internal, `SDL_render_mmiyoo_commands.c`)
 - Sample-rate selection: `MMIYOO_SelectSampleRate`
 - Gamepad mapping: `MMIYOO_JoystickGetGamepadMapping`
 - Rumble auto-stop timer: `MMIYOO_HapticTimer`
+
+## Source layout
+
+`src/render/mmiyoo/`:
+- `SDL_render_mmiyoo.c` -- renderer driver descriptor, vtable wiring, renderer creation/destruction, top-level lifecycle
+- `SDL_render_mmiyoo_internal.h` -- private cross-file contract for the files below (not public API)
+- `SDL_render_mmiyoo_geometry.c` -- viewport/clip/triangle-rasterization primitives, QuickFill/DrawLine execution
+- `SDL_render_mmiyoo_texture.c` -- pixel-format conversion, MMA allocation, the bounded texture pool, texture lifecycle
+- `SDL_render_mmiyoo_commands.c` -- SDL command-queue producers/execution, line/rect batching, the copy-command executor
+- `SDL_render_mmiyoo_scaling.c` -- integer upscaling, downscale-composite, stretch-fill, NEON scaler selection
+- `SDL_render_mmiyoo_present.c` -- render-target readback, present-vsync selection, renderer presentation
+
+`src/video/mmiyoo/`:
+- `SDL_video_mmiyoo.c` -- device/window creation, display-mode setup, video init/quit
+- `SDL_video_mmiyoo_internal.h` -- private GFX/window state and GFX/FB internals
+- `SDL_video_mmiyoo_gfx.c` -- framebuffer metrics, system/GFX init+teardown, the shared MI_GFX blit implementation
+- `SDL_video_mmiyoo_present.c` -- buffer swap/page-flip, framebuffer/overlay accessors, presentation pacing
+- `SDL_opengles_mmiyoo.h` -- compatibility-facing GLES declarations (unchanged)
+- `SDL_opengles_mmiyoo_internal.h` -- private present-mode/buffer-settings contract between the two files below
+- `SDL_opengles_mmiyoo_context.c` -- library loading, EGL config selection, context creation/deletion
+- `SDL_opengles_mmiyoo_swap.c` -- swap interval, pbuffer/windowsurface presentation, buffer-settings handling
 
 ## SDL driver functionality supported
 
