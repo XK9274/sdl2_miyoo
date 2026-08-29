@@ -352,9 +352,8 @@ SDL_RenderDriver MMIYOO_RenderDriver = {
             [7] = SDL_PIXELFORMAT_ARGB4444,
             [8] = SDL_PIXELFORMAT_RGBA4444,
         },
-        /* Allows an oversized (up to 800x600) render target; MMIYOO_TryDownscaleCompositeCopy handles the composite. */
-        .max_texture_width = 800,
-        .max_texture_height = 600,
+        .max_texture_width = 4096,
+        .max_texture_height = 4096,
     }
 };
 
