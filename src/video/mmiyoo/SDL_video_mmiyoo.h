@@ -1,6 +1,5 @@
 /*
   Customized version for Miyoo-Mini handheld.
-  Only tested under Miyoo-Mini stock OS (original firmware) with Parasyte compatible layer.
 
   Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
   Copyright (C) 2022-2022 Steward Fu <steward.fu@gmail.com>
@@ -31,7 +30,6 @@
 #include <linux/fb.h>
 
 #include "../SDL_sysvideo.h"
-#include "../SDL_sysvideo.h"
 #include "SDL_log.h"
 #include "../SDL_pixels_c.h"
 #include "../../events/SDL_events_c.h"
@@ -45,12 +43,6 @@
 #include "SDL_thread.h"
 #include "SDL_mutex.h"
 #include "SDL_mouse.h"
-#include "SDL_video_mmiyoo.h"
-#include "SDL_event_mmiyoo.h"
-#include "SDL_framebuffer_mmiyoo.h"
-#if SDL_VIDEO_OPENGL_EGL && SDL_VIDEO_OPENGL_ES2
-#include "SDL_opengles_mmiyoo.h"
-#endif
 
 #ifdef MMIYOO
     #include "mi_sys.h"
@@ -68,42 +60,12 @@ typedef struct MMIYOO_VideoInfo {
     SDL_Window *window;
 } MMIYOO_VideoInfo;
 
-typedef struct _GFX {
-    int fb_dev;
-
-    struct fb_var_screeninfo vinfo;
-    struct fb_fix_screeninfo finfo;
-
-    struct _DMA {
-        void *virAddr;
-        MI_PHY phyAddr;
-        MI_U32 length;
-
-    } fb, back, overlay;
-
-    struct _HW {
-        struct _BUF {
-            MI_GFX_Surface_t surf;
-            MI_GFX_Rect_t rt;
-        } src, dst, overlay;
-        MI_GFX_Opt_t opt;
-    } hw;
-
-    SDL_bool double_buffer_enabled;
-
-    /* Present strategy: real FBIOPAN_DISPLAY flip vs the fenced BitBlit copy. */
-    SDL_bool page_flip_enabled;
-    int page_flip_index;
-
-    /* SDL_TRUE once a GLES windowsurface-mode context has written into
-     * gfx.back directly (see SDL_opengles_mmiyoo.c) -- its memory byte order
-     * is GL's RGBA8888, which MI_GFX calls ABGR8888, not the ARGB8888 our
-     * own SW blits use. Unused in pbuffer mode (the default). */
-    SDL_bool back_buffer_is_gles_rgba;
-} GFX;
+/* GFX/window internal state (the _GFX/GFX struct, framebuffer metrics, and
+ * FB_Init/FB_Uninit/GFX_Init/GFX_Quit/FB_Clear) is private to video.c/_gfx.c/
+ * _present.c -- see SDL_video_mmiyoo_internal.h. This header carries only the
+ * GFX contract functions the renderer and GLES backend actually call. */
 
 void GFX_SetBackBufferGLESFormat(SDL_bool is_gles_rgba);
-void FB_Clear(void);
 void GFX_FlushTextureFences(void);
 void GFX_AddTextureFence(MI_U16 fence);
 int GFX_Copy(const void *pixels,
@@ -135,23 +97,6 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync);
 void *GFX_GetFrameBufferVirtual(void);
 void *GFX_GetOverlayVirtual(void);
 MI_PHY GFX_GetOverlayPhysical(void);
-
-int FB_Init(void);
-int FB_Uninit(void);
-
-int My_QueueCopy(SDL_Renderer *renderer,
-                 SDL_Texture *texture,
-                 const void *pixels,
-                 const SDL_Rect *srcrect,
-                 const SDL_FRect *dstrect,
-                 SDL_BlendMode blend_mode,
-                 MI_GFX_Rotate_e extra_rotation,
-                 SDL_RendererFlip flip,
-                 SDL_FPoint rotation_center,
-                 Uint8 mod_r,
-                 Uint8 mod_g,
-                 Uint8 mod_b,
-                 Uint8 mod_a);
 
 #ifndef MMIYOO_LOG_DEBUG
 #define MMIYOO_LOG_PREFIX "[MMIYOO] "

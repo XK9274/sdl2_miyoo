@@ -1,9 +1,8 @@
 /*
-  Customized version for Miyoo-Mini handheld.
-  Only tested under Miyoo-Mini stock OS (original firmware) with Parasyte compatible layer.
+  New translation unit created for the Miyoo-Mini SDL renderer/video split.
 
   Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
-  Copyright (C) 2022-2022 Steward Fu <steward.fu@gmail.com>
+  Copyright (C) 2026-2026 XK9274 <xk.github@pm.me>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -27,40 +26,17 @@
 
 #include "SDL_video_mmiyoo.h"
 #include "SDL_opengles_mmiyoo.h"
+#include "SDL_opengles_mmiyoo_internal.h"
 #include <GLES2/gl2.h>
 
-/* GL render target size, in lockstep with RetroArch's own
- * video_fullscreen_x/y in retroarch.cfg -- they must match exactly, or RA
- * lays out its UI for a canvas size that doesn't match what we actually
- * give it (the "quarter screen" bug: RA rendered crisply at 320x240 while
- * believing the target was 640x480). Currently full real panel resolution
- * -- no hardware scale-up needed (srcrect == dstrect in glSwapWindow), at
- * the cost of SwiftShader software-rendering the full panel every frame.
- * Drop to a smaller size (e.g. 320x240, an exact 2x-downscale of this
- * panel) to trade render cost for a clean integer hardware upscale on
- * present if full-res proves too slow again -- same shape every
- * offscreen-FBO suite in miyoo_sdl2_benchmarks already uses. */
-#define MMIYOO_GLES_RENDER_WIDTH  640
-#define MMIYOO_GLES_RENDER_HEIGHT 480
-
-/* Two present strategies, selected via SDL_MMIYOO_GLES_PRESENT_MODE:
- *   "pbuffer" (default) -- render into an EGL PBuffer, glReadPixels() into
- *     gfx.overlay, hardware-blit that to the panel. Colour-correct, but
- *     still bound by SwiftShader's software-rasterizer performance ceiling.
- *   "windowsurface" -- a real EGL WindowSurface, presented through the
- *     vendor eglUpdateBufferSettings extension into gfx.back. Kept for
- *     comparison/regression testing only: known to still produce colour
- *     corruption (green patches) in translucent UI regions, root cause not
- *     found -- see TODO. */
-typedef enum {
-    MMIYOO_GLES_PRESENT_PBUFFER = 0,
-    MMIYOO_GLES_PRESENT_WINDOWSURFACE
-} MMIYOO_GLESPresentMode_e;
+/* Library loading, EGL config selection, context creation/deletion,
+ * present-surface selection (pbuffer vs windowsurface) needed by context
+ * creation, make-current behavior, and profile defaults. */
 
 static MMIYOO_GLESPresentMode_e g_present_mode = MMIYOO_GLES_PRESENT_PBUFFER;
 static SDL_bool g_present_mode_resolved = SDL_FALSE;
 
-static MMIYOO_GLESPresentMode_e
+MMIYOO_GLESPresentMode_e
 MMIYOO_GLES_ResolvePresentMode(void)
 {
     if (!g_present_mode_resolved) {
@@ -71,67 +47,6 @@ MMIYOO_GLES_ResolvePresentMode(void)
         g_present_mode_resolved = SDL_TRUE;
     }
     return g_present_mode;
-}
-
-/* windowsurface mode only, below: exported by the vendor libEGL.so but not
- * registered in its eglGetProcAddress extension table, so it must be linked
- * directly rather than looked up at runtime -- eglGetProcAddress
- * ("eglUpdateBufferSettings") reliably returns NULL on-device even though
- * the symbol is present in the .so. */
-extern EGLBoolean eglUpdateBufferSettings(EGLDisplay display, EGLSurface surface, void *pFunc, void *fb_idx, void *fb_vaddr);
-
-static void *ppFunc = NULL;
-static void *pfb_idx = NULL;
-static void *pfb_vaddr = NULL;
-static SDL_bool g_gles_wait_for_vsync = SDL_TRUE;
-
-static void MMIYOO_GLES_Flip(void)
-{
-    GFX_SwapBuffers(g_gles_wait_for_vsync);
-}
-
-static SDL_bool
-MMIYOO_GLES_UpdateBufferSettings(_THIS)
-{
-    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
-    void *fb_vaddr;
-
-    if (!gl_data ||
-        gl_data->display == EGL_NO_DISPLAY || gl_data->surface == EGL_NO_SURFACE) {
-        return SDL_FALSE;
-    }
-
-    fb_vaddr = GFX_GetFrameBufferVirtual();
-    if (!fb_vaddr) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
-                    "MMIYOO GLES: no mapped framebuffer for eglUpdateBufferSettings");
-        return SDL_FALSE;
-    }
-
-    /* SwiftShader's Miyoo framebuffer shim reads two virtual addresses and
-     * indexes them with fb_idx % 2. In present-copy mode there is one stable
-     * back buffer, so both entries intentionally point at the current draw
-     * buffer. In page-flip mode this helper is called again after every swap,
-     * refreshing both entries to the newly hidden page before the next frame. */
-    gl_data->fb_idx = 0;
-    gl_data->fb_vaddr[0] = (unsigned long)fb_vaddr;
-    gl_data->fb_vaddr[1] = (unsigned long)fb_vaddr;
-
-    if (eglUpdateBufferSettings(gl_data->display, gl_data->surface,
-                                  (void *)MMIYOO_GLES_Flip,
-                                  &gl_data->fb_idx,
-                                  gl_data->fb_vaddr) != EGL_TRUE) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
-                    "MMIYOO GLES: eglUpdateBufferSettings failed (0x%04x)",
-                    eglGetError());
-        gl_data->buffer_settings_attached = SDL_FALSE;
-        return SDL_FALSE;
-    }
-
-    GFX_SetBackBufferGLESFormat(SDL_TRUE);
-    gl_data->buffer_settings_attached = SDL_TRUE;
-    gl_data->owns_buffer_settings = SDL_TRUE;
-    return SDL_TRUE;
 }
 
 void
@@ -296,13 +211,10 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
         /* A real WindowSurface drives SwiftShader's FrameBufferMMiyoo present
          * path (WindowSurface::swap() -> blit() -> copyRoutine()'s
          * Reactor-JIT blit), which segfaults inside libGLESv2.so on the
-         * first-ever eglSwapBuffers() call, on-screen, unconditionally --
-         * confirmed via an isolated minimal reproducer independent of
-         * RetroArch or this driver's own present code. A PBuffer surface
-         * never touches that code path at all: same pattern every
-         * offscreen-FBO GL suite in miyoo_sdl2_benchmarks already uses.
-         * glSwapWindow() below reads pixels back manually instead of
-         * calling eglSwapBuffers(). */
+         * first-ever eglSwapBuffers() call, unconditionally. A PBuffer
+         * surface never touches that code path at all; glSwapWindow()
+         * below reads pixels back manually instead of calling
+         * eglSwapBuffers(). */
         const EGLint surface_attribs[] = {
             EGL_WIDTH, MMIYOO_GLES_RENDER_WIDTH,
             EGL_HEIGHT, MMIYOO_GLES_RENDER_HEIGHT,
@@ -355,140 +267,6 @@ SDL_GLContext glCreateContext(_THIS, SDL_Window *window)
     }
 
     return context;
-}
-
-int glSetSwapInterval(_THIS, int interval)
-{
-    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
-
-    if (!gl_data || gl_data->display == EGL_NO_DISPLAY) {
-        return SDL_SetError("MMIYOO: swap interval set without active display");
-    }
-
-    if (eglSwapInterval(gl_data->display, interval) != EGL_TRUE) {
-        return SDL_SetError("MMIYOO: eglSwapInterval failed (0x%04x)", eglGetError());
-    }
-
-    gl_data->swap_interval = interval;
-    g_gles_wait_for_vsync = (interval != 0) ? SDL_TRUE : SDL_FALSE;
-    return 0;
-}
-
-int glGetSwapInterval(_THIS)
-{
-    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
-    if (!gl_data) {
-        return 0;
-    }
-    return gl_data->swap_interval;
-}
-
-int glUpdateBufferSettings(void *pFunc, void *fb_idx, void *fb_vaddr)
-{
-    ppFunc = pFunc;
-    pfb_idx = fb_idx;
-    pfb_vaddr = fb_vaddr;
-    return 0;
-}
-
-static int
-MMIYOO_GLES_SwapWindow_PBuffer(_THIS)
-{
-    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
-    Uint8 *overlay_virt;
-    MI_PHY overlay_phy;
-    SDL_Rect srcrect, dstrect;
-    int pitch;
-
-    overlay_virt = (Uint8 *)GFX_GetOverlayVirtual();
-    overlay_phy = GFX_GetOverlayPhysical();
-    if (!overlay_virt || !overlay_phy) {
-        return SDL_SetError("MMIYOO: no overlay buffer to read GL pixels into");
-    }
-
-    pitch = MMIYOO_GLES_RENDER_WIDTH * 4;
-
-    /* No CPU copy anywhere in this path: glReadPixels() writes directly
-     * into gfx.overlay (MI_SYS-allocated, physical address already valid
-     * for MI_GFX_BitBlit -- see GFX_GetOverlayVirtual/Physical), and
-     * MI_GFX_BitBlit below both hardware-scales AND corrects orientation
-     * in one DMA-driven blit. No neon_memcpy, no SDL_memcpy, no per-row
-     * loop of any kind. */
-    glReadPixels(0, 0, MMIYOO_GLES_RENDER_WIDTH, MMIYOO_GLES_RENDER_HEIGHT,
-                 GL_RGBA, GL_UNSIGNED_BYTE, overlay_virt);
-
-    srcrect.x = 0;
-    srcrect.y = 0;
-    srcrect.w = MMIYOO_GLES_RENDER_WIDTH;
-    srcrect.h = MMIYOO_GLES_RENDER_HEIGHT;
-
-    /* Hardware-scaled present: source is the small render, destination is
-     * the full real panel -- MI_GFX_BitBlit does the upscale. 640/320 and
-     * 480/240 are both exact 2x, so this is a clean integer scale. */
-    dstrect.x = 0;
-    dstrect.y = 0;
-    dstrect.w = (int)GFX_GetFrameWidth();
-    dstrect.h = (int)GFX_GetFrameHeight();
-
-    /* glReadPixels(GL_RGBA) byte order R,G,B,A in memory is
-     * E_MI_GFX_FMT_ABGR8888 by MI_GFX's naming (first-named channel =
-     * highest byte) -- same mapping SDL_PIXELFORMAT_ABGR8888 uses.
-     *
-     * MIRROR_HORIZONTAL, not a CPU row-flip + ROTATE_180: composing the
-     * panel's required ROTATE_180 (see My_QueueCopy's
-     * `base_rotation = is_target_texture ? ROTATE_0 : ROTATE_180`) with
-     * glReadPixels' inherent bottom-up row order algebraically cancels the
-     * Y component, leaving a pure X-flip. Doing that flip in MI_GFX
-     * instead of on the CPU removes the last CPU-side pixel touch from
-     * this path entirely -- MI_GFX_BitBlit (DMA-driven hardware blit) does
-     * 100% of the pixel movement now. */
-    if (GFX_Copy(overlay_virt, overlay_phy, srcrect, dstrect, pitch,
-                 E_MI_GFX_ROTATE_0, E_MI_GFX_MIRROR_HORIZONTAL, SDL_BLENDMODE_NONE,
-                 NULL, NULL, SDL_FALSE,
-                 0, E_MI_GFX_FMT_ABGR8888, 4,
-                 255, 255, 255, 255) != 0) {
-        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "MMIYOO GLES: GFX_Copy present blit failed");
-    }
-
-    /* MI_GFX_BitBlit is asynchronous (fire-and-forget with a fence) and
-     * gfx.overlay is a single shared buffer, not double-buffered -- without
-     * waiting here, next frame's glReadPixels() can start overwriting it
-     * while this frame's hardware blit is still reading from it, producing
-     * exactly the kind of torn/flickering frame this caused before this
-     * flush was added. */
-    GFX_FlushTextureFences();
-
-    GFX_SwapBuffers(gl_data->swap_interval != 0);
-
-    return 0;
-}
-
-int glSwapWindow(_THIS, SDL_Window *window)
-{
-    SDL_GLDriverData *gl_data = (SDL_GLDriverData *)_this->gl_data;
-    (void)window;
-
-    if (!gl_data || gl_data->display == EGL_NO_DISPLAY || gl_data->surface == EGL_NO_SURFACE) {
-        return SDL_SetError("MMIYOO: no EGL surface to swap");
-    }
-
-    if (MMIYOO_GLES_ResolvePresentMode() == MMIYOO_GLES_PRESENT_PBUFFER) {
-        return MMIYOO_GLES_SwapWindow_PBuffer(_this);
-    }
-
-    if (eglSwapBuffers(gl_data->display, gl_data->surface) != EGL_TRUE) {
-        return SDL_SetError("MMIYOO: eglSwapBuffers failed (0x%04x)", eglGetError());
-    }
-
-    if (gl_data->buffer_settings_attached) {
-        if (gl_data->owns_buffer_settings) {
-            MMIYOO_GLES_UpdateBufferSettings(_this);
-        }
-    } else {
-        GFX_SwapBuffers(gl_data->swap_interval != 0);
-    }
-
-    return 0;
 }
 
 int glMakeCurrent(_THIS, SDL_Window *window, SDL_GLContext context)
