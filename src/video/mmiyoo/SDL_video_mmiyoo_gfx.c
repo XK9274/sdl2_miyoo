@@ -101,6 +101,21 @@ static SDL_SpinLock g_mmiyoo_sys_lock = 0;
 static int g_mmiyoo_sys_refcount = 0;
 static int g_mmiyoo_gfx_refcount = 0;
 
+/* Real-linkage symbols compiled into SDL_render.c, always in the same
+ * libSDL2-2.0.so.0. Declared extern here (as SDL_sysrender.h itself does)
+ * so this src/video/ file can decompose composed blend modes without
+ * pulling in the src/render/-internal header. */
+extern SDL_BlendFactor SDL_GetBlendModeSrcColorFactor(SDL_BlendMode blendMode);
+extern SDL_BlendFactor SDL_GetBlendModeDstColorFactor(SDL_BlendMode blendMode);
+extern SDL_BlendOperation SDL_GetBlendModeColorOperation(SDL_BlendMode blendMode);
+extern SDL_BlendFactor SDL_GetBlendModeSrcAlphaFactor(SDL_BlendMode blendMode);
+extern SDL_BlendFactor SDL_GetBlendModeDstAlphaFactor(SDL_BlendMode blendMode);
+extern SDL_BlendOperation SDL_GetBlendModeAlphaOperation(SDL_BlendMode blendMode);
+
+/* Latched once per process: whether a composed blend mode is representable
+ * on this hardware is a static fact about that mode, not renderer state. */
+static SDL_bool g_warned_unsupported_compose = SDL_FALSE;
+
 static void
 MMIYOO_WaitGFXIdle(void)
 {
@@ -397,6 +412,54 @@ void FB_Clear(void)
 #endif
 }
 
+/* SDL_BlendFactor -> MI_GFX_DfbBldOp_e. MI_GFX's SRCALPHASAT/NONE/MAX have
+ * no SDL_BlendFactor equivalent and are never produced here. */
+static MI_GFX_DfbBldOp_e
+MMIYOO_SDLBlendFactorToDfbBldOp(SDL_BlendFactor factor)
+{
+    switch (factor) {
+        case SDL_BLENDFACTOR_ZERO:                return E_MI_GFX_DFB_BLD_ZERO;
+        case SDL_BLENDFACTOR_ONE:                 return E_MI_GFX_DFB_BLD_ONE;
+        case SDL_BLENDFACTOR_SRC_COLOR:           return E_MI_GFX_DFB_BLD_SRCCOLOR;
+        case SDL_BLENDFACTOR_ONE_MINUS_SRC_COLOR: return E_MI_GFX_DFB_BLD_INVSRCCOLOR;
+        case SDL_BLENDFACTOR_SRC_ALPHA:           return E_MI_GFX_DFB_BLD_SRCALPHA;
+        case SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA: return E_MI_GFX_DFB_BLD_INVSRCALPHA;
+        case SDL_BLENDFACTOR_DST_COLOR:           return E_MI_GFX_DFB_BLD_DESTCOLOR;
+        case SDL_BLENDFACTOR_ONE_MINUS_DST_COLOR: return E_MI_GFX_DFB_BLD_INVDESTCOLOR;
+        case SDL_BLENDFACTOR_DST_ALPHA:           return E_MI_GFX_DFB_BLD_DESTALPHA;
+        case SDL_BLENDFACTOR_ONE_MINUS_DST_ALPHA: return E_MI_GFX_DFB_BLD_INVDESTALPHA;
+        default:                                  return E_MI_GFX_DFB_BLD_MAX;
+    }
+}
+
+/* Decomposes a composed SDL_BlendMode and checks whether it fits MI_GFX's
+ * single (eSrcDfbBldOp, eDstDfbBldOp) pair applied uniformly across all 4
+ * channels with an implicit ADD combine -- the same tier of support SDL's
+ * own OpenGL ES1 renderer documents. Returns SDL_FALSE (leaving *src_op/
+ * *dst_op untouched) if the mode needs a non-ADD operation or mismatched
+ * color-vs-alpha factors. */
+static SDL_bool
+MMIYOO_TryComposeBlendMode(SDL_BlendMode blend_mode, MI_GFX_DfbBldOp_e *src_op, MI_GFX_DfbBldOp_e *dst_op)
+{
+    SDL_BlendFactor srcColor = SDL_GetBlendModeSrcColorFactor(blend_mode);
+    SDL_BlendFactor dstColor = SDL_GetBlendModeDstColorFactor(blend_mode);
+    SDL_BlendOperation colorOp = SDL_GetBlendModeColorOperation(blend_mode);
+    SDL_BlendFactor srcAlpha = SDL_GetBlendModeSrcAlphaFactor(blend_mode);
+    SDL_BlendFactor dstAlpha = SDL_GetBlendModeDstAlphaFactor(blend_mode);
+    SDL_BlendOperation alphaOp = SDL_GetBlendModeAlphaOperation(blend_mode);
+
+    if (colorOp != SDL_BLENDOPERATION_ADD || alphaOp != SDL_BLENDOPERATION_ADD) {
+        return SDL_FALSE;
+    }
+    if (srcColor != srcAlpha || dstColor != dstAlpha) {
+        return SDL_FALSE;
+    }
+
+    *src_op = MMIYOO_SDLBlendFactorToDfbBldOp(srcColor);
+    *dst_op = MMIYOO_SDLBlendFactorToDfbBldOp(dstColor);
+    return SDL_TRUE;
+}
+
 int GFX_Copy(const void *pixels,
              MI_PHY pixels_phy,
              SDL_Rect srcrect,
@@ -561,13 +624,29 @@ int GFX_Copy(const void *pixels,
                 gfx.hw.opt.eDFBBlendFlag =
                     src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
                 break;
-            default:
-                /* SDL_BLENDMODE_BLEND and any unknown modes fall back to standard alpha blending */
-                gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
-                gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-                gfx.hw.opt.eDFBBlendFlag =
-                    src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+            default: {
+                MI_GFX_DfbBldOp_e composed_src_op, composed_dst_op;
+                if (MMIYOO_TryComposeBlendMode(blend_mode, &composed_src_op, &composed_dst_op)) {
+                    gfx.hw.opt.eSrcDfbBldOp = composed_src_op;
+                    gfx.hw.opt.eDstDfbBldOp = composed_dst_op;
+                    gfx.hw.opt.eDFBBlendFlag =
+                        src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                } else {
+                    if (blend_mode != SDL_BLENDMODE_BLEND && !g_warned_unsupported_compose) {
+                        MMIYOO_LOG_WARN("GFX_Copy: composed blend mode 0x%x not representable on MI_GFX "
+                                         "(needs non-ADD operation or mismatched color/alpha factors), "
+                                         "falling back to standard alpha blending",
+                                         (unsigned)blend_mode);
+                        g_warned_unsupported_compose = SDL_TRUE;
+                    }
+                    /* SDL_BLENDMODE_BLEND and any unrepresentable composed modes fall back to standard alpha blending */
+                    gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
+                    gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
+                    gfx.hw.opt.eDFBBlendFlag =
+                        src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                }
                 break;
+            }
         }
     }
 
