@@ -204,7 +204,9 @@ static MI_GFX_ColorFmt_e MMIYOO_SDLToMIGfxFormat(Uint32 sdl_format, int *bits_pe
         case SDL_PIXELFORMAT_RGBA8888:
             *bits_per_pixel = 32;
             *format_name = "RGBA8888->ARGB8888";
-            return E_MI_GFX_FMT_ARGB8888;  /* Force ARGB8888 for consistency with framebuffer */
+            /* No MI_GFX format matches RGBA8888's real memory order (A,B,G,R on
+             * this little-endian target); forcing ARGB8888 silently swaps R/B. */
+            return E_MI_GFX_FMT_ARGB8888;
             
         case SDL_PIXELFORMAT_ABGR8888:
             *bits_per_pixel = 32;
