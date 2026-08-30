@@ -101,6 +101,14 @@ typedef struct MMIYOO_RenderData {
     Uint32 stats_max_span_width;
     Uint8 span_band_height;
 
+    /* CPU-write eligible untextured triangle spans directly into the mapped
+     * window/back-buffer instead of one hardware fill call (+fence) per
+     * band. Off by default. */
+    SDL_bool direct_write_enabled;
+    SDL_bool direct_write_used_this_frame;  /* gates the once-per-frame pre-write hazard flush */
+    SDL_bool direct_write_dirty;            /* gates the once-per-frame post-write cache flush before GFX_SwapBuffers */
+    SDL_Rect direct_write_dirty_rect;       /* union bounding box, in framebuffer-memory coordinates */
+
     int framebuffer_width;
     int framebuffer_height;
 
@@ -202,6 +210,7 @@ SDL_bool MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
                                 SDL_Rect *out_clip,
                                 SDL_bool *clip_enabled);
 void MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
+SDL_bool MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 SDL_bool MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data, float x0, float y0, float x1, float y1, Uint32 color);
 
 /* --- commands.c public API (also wired directly into the SDL_Renderer vtable by

@@ -154,6 +154,22 @@ void MMIYOO_RenderPresent(SDL_Renderer *renderer)
 
         GFX_FlushTextureFences();
 
+        /* Flushes the CPU write(s) this frame made before the swap below lets
+         * hardware read that memory. The single-buffer fallback has no other
+         * flush point, so this is load-bearing there, not just redundant. */
+        if (data->direct_write_dirty) {
+            void *dirty_vir = GFX_GetFrameBufferVirtual();
+            if (dirty_vir) {
+                Uint32 dirty_stride = data->current_target_surface.u32Stride;
+                Uint8 *dirty_ptr = (Uint8 *)dirty_vir + (size_t)data->direct_write_dirty_rect.y * dirty_stride;
+                size_t dirty_bytes = (size_t)data->direct_write_dirty_rect.h * dirty_stride;
+                MMIYOO_FlushInvCacheRange(dirty_ptr, dirty_bytes);
+            }
+            data->direct_write_dirty = SDL_FALSE;
+            SDL_zero(data->direct_write_dirty_rect);
+        }
+        data->direct_write_used_this_frame = SDL_FALSE;
+
         if (!data->is_target_texture || data->texture_blitted_to_screen) {
             GFX_SwapBuffers(data->vsync);
             MMIYOO_UpdatePresentVSyncFlag(renderer, data->vsync);
