@@ -210,11 +210,13 @@ static MI_GFX_ColorFmt_e MMIYOO_SDLToMIGfxFormat(Uint32 sdl_format, int *bits_pe
         case SDL_PIXELFORMAT_ABGR8888:
             *bits_per_pixel = 32;
             *format_name = "ABGR8888";
+            /* TODO: dev-tools/pixel-format-probe (mm-buildbot) shows this decodes as if it were ARGB8888 -- needs investigation. */
             return E_MI_GFX_FMT_ABGR8888;
-            
+
         case SDL_PIXELFORMAT_BGRA8888:
             *bits_per_pixel = 32;
             *format_name = "BGRA8888";
+            /* TODO: also decodes as if ARGB8888, same as ABGR8888 above -- needs investigation. */
             return E_MI_GFX_FMT_BGRA8888;
             
         case SDL_PIXELFORMAT_ARGB1555:
