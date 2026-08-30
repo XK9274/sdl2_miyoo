@@ -467,26 +467,13 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
     }
 }
 
-/* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path: CPU-write a merged fill span
- * directly into the mapped window/back-buffer instead of dispatching a
- * MI_GFX_QuickFill hardware call (+fence) for it. Returns SDL_FALSE (caller
- * falls back to MMIYOO_ExecuteQuickFill, unchanged behavior) on anything not
- * eligible -- fails closed. Only ever active for untextured triangle fills
- * against the non-target-texture ARGB8888 surface; render-target textures
- * have no virAddr on MI_GFX_Surface_t and stay on the hardware path. */
-SDL_bool
-MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+/* Shared eligibility check + once-per-frame hazard flush for both direct-
+ * write paths. Fails closed unless writing the non-texture ARGB8888
+ * surface -- render-target textures have no mapped virtual address. */
+static SDL_bool
+MMIYOO_DirectWriteBegin(MMIYOO_RenderData *data, void **out_vir, Uint32 *out_stride)
 {
     void *vir;
-    int fb_w;
-    int fb_h;
-    int dst_x;
-    int dst_y;
-    Uint32 stride;
-    Uint8 *base;
-    SDL_Rect written;
-    int row;
-    int col;
 
     if (!data->direct_write_enabled) {
         return SDL_FALSE;
@@ -497,9 +484,6 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
     if (data->current_target_surface.eColorFmt != E_MI_GFX_FMT_ARGB8888) {
         return SDL_FALSE;
     }
-    if (!dst || dst->w <= 0 || dst->h <= 0) {
-        return SDL_FALSE;
-    }
     if (GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
         return SDL_FALSE;
     }
@@ -508,14 +492,52 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
         return SDL_FALSE;
     }
 
-    /* RENDERCMD_CLEAR dispatches an async hardware QuickFill before geometry
-     * commands run -- without waiting for it first, that clear could
-     * complete after our CPU write and clobber it. Same precondition
-     * MMIYOO_UpdateTexture already enforces before overwriting a texture a
-     * GPU op might still be touching. Bounded to once per frame. */
+    /* Waits for any pending async hardware fill to finish before this CPU
+     * write, so it can't be clobbered by a fill that completes afterward.
+     * Bounded to once per frame. */
     if (!data->direct_write_used_this_frame) {
         GFX_FlushTextureFences();
         data->direct_write_used_this_frame = SDL_TRUE;
+    }
+
+    *out_vir = vir;
+    *out_stride = data->current_target_surface.u32Stride;
+    return SDL_TRUE;
+}
+
+static void
+MMIYOO_DirectWriteMarkDirty(MMIYOO_RenderData *data, const SDL_Rect *written)
+{
+    if (!data->direct_write_dirty) {
+        data->direct_write_dirty_rect = *written;
+    } else {
+        SDL_UnionRect(&data->direct_write_dirty_rect, written, &data->direct_write_dirty_rect);
+    }
+    data->direct_write_dirty = SDL_TRUE;
+}
+
+/* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path: CPU-write a merged fill span
+ * directly into the mapped window/back-buffer instead of dispatching a
+ * MI_GFX_QuickFill hardware call (+fence) for it. */
+SDL_bool
+MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+{
+    void *vir;
+    Uint32 stride;
+    int fb_w;
+    int fb_h;
+    int dst_x;
+    int dst_y;
+    Uint8 *base;
+    SDL_Rect written;
+    int row;
+    int col;
+
+    if (!dst || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (!MMIYOO_DirectWriteBegin(data, &vir, &stride)) {
+        return SDL_FALSE;
     }
 
     /* Repositions only (no rotation needed for a solid fill) to match
@@ -525,7 +547,6 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
     dst_x = fb_w - dst->x - dst->w;
     dst_y = fb_h - dst->y - dst->h;
 
-    stride = data->current_target_surface.u32Stride;
     base = (Uint8 *)vir;
     for (row = 0; row < dst->h; ++row) {
         Uint32 *pixels = (Uint32 *)(base + (size_t)(dst_y + row) * stride + (size_t)dst_x * 4);
@@ -538,12 +559,65 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
     written.y = dst_y;
     written.w = dst->w;
     written.h = dst->h;
-    if (!data->direct_write_dirty) {
-        data->direct_write_dirty_rect = written;
-    } else {
-        SDL_UnionRect(&data->direct_write_dirty_rect, &written, &data->direct_write_dirty_rect);
+    MMIYOO_DirectWriteMarkDirty(data, &written);
+
+    return SDL_TRUE;
+}
+
+/* Bresenham line plot (1px, solid -- matches MI_GFX_DrawLine's non-
+ * gradient output) using the same flipped/clamped hardware-space
+ * coordinates already computed for the QuickFill path. */
+static SDL_bool
+MMIYOO_TryDirectLineWrite(MMIYOO_RenderData *data, int x0, int y0, int x1, int y1, Uint32 color)
+{
+    void *vir;
+    Uint32 stride;
+    Uint8 *base;
+    int surf_w;
+    int surf_h;
+    int px, py;
+    int dx, sx, dy, sy, err, e2;
+    SDL_Rect written;
+
+    if (!MMIYOO_DirectWriteBegin(data, &vir, &stride)) {
+        return SDL_FALSE;
     }
-    data->direct_write_dirty = SDL_TRUE;
+
+    surf_w = (int)data->current_target_surface.u32Width;
+    surf_h = (int)data->current_target_surface.u32Height;
+    base = (Uint8 *)vir;
+
+    px = x0;
+    py = y0;
+    dx = SDL_abs(x1 - x0);
+    sx = (x0 < x1) ? 1 : -1;
+    dy = -SDL_abs(y1 - y0);
+    sy = (y0 < y1) ? 1 : -1;
+    err = dx + dy;
+
+    for (;;) {
+        if (px >= 0 && px < surf_w && py >= 0 && py < surf_h) {
+            *(Uint32 *)(base + (size_t)py * stride + (size_t)px * 4) = color;
+        }
+        if (px == x1 && py == y1) {
+            break;
+        }
+        e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            px += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            py += sy;
+        }
+    }
+
+    written.x = SDL_min(x0, x1);
+    written.y = SDL_min(y0, y1);
+    written.w = SDL_abs(x1 - x0) + 1;
+    written.h = SDL_abs(y1 - y0) + 1;
+    MMIYOO_DirectWriteMarkDirty(data, &written);
 
     return SDL_TRUE;
 }
@@ -649,6 +723,11 @@ MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data,
     line.bColorGradient = FALSE;
     line.u32ColorFrom = color;
     line.u32ColorTo = color;
+
+    if (MMIYOO_TryDirectLineWrite(data, line.stPointFrom.s16x, line.stPointFrom.s16y,
+                                  line.stPointTo.s16x, line.stPointTo.s16y, color)) {
+        return SDL_TRUE;
+    }
 
     result = MI_GFX_DrawLine(&data->current_target_surface, &line, &fence);
     if (result == MI_SUCCESS) {
