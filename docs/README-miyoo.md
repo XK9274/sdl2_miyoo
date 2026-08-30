@@ -82,7 +82,7 @@ Runtime environment variables
 | `SDL_MMIYOO_TEXTURE_POOL` | on (`1`) | Set to `0` to disable the bounded MI_SYS MMA texture reuse pool. |
 | `SDL_MMIYOO_TEXTURE_POOL_MAX_BYTES` | `10485760` (10 MiB) | Texture pool size cap in bytes. |
 | `SDL_MMIYOO_GEOMETRY_QUICKPATH` | off | Enable glyph-quad duplicate-blit skip for textured geometry (e.g. font batches). |
-| `SDL_MMIYOO_GEOMETRY_BAND_HEIGHT` | `3` | Software triangle rasterizer span-band height in pixels, clamped 1-32. |
+| `SDL_MMIYOO_GEOMETRY_DIRECT_WRITE` | off | CPU-write untextured triangle fill spans and lines directly into the mapped window/back-buffer instead of one `MI_GFX_QuickFill`/`MI_GFX_DrawLine` hardware call (+fence) per primitive. Render-target-texture draws are unaffected regardless. Unsafe for a suite where a same-frame hardware GFX operation reads the window/back buffer as a source -- see `docs/MMIYOO_SDL_FEATURE_SUMMARY.md`. |
 | `SDL_MMIYOO_FRAME_TIMING` | off | Collect and log per-frame render timing stats. |
 | `SDL_MMIYOO_GEOMETRY_STATS` | off | Collect and log geometry span stats. |
 | `SDL_MMIYOO_DEBUG` | off | Raise the render-driver log category to debug priority. |

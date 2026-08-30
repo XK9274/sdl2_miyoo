@@ -232,6 +232,13 @@ MMIYOO_SetupEdge(MMIYOO_Edge *edge, const SDL_FPoint *p0, const SDL_FPoint *p1)
 
 // Triangle filling via incremental edge walking.
 
+/* Was hint-configurable (SDL_MMIYOO_GEOMETRY_BAND_HEIGHT, 1-32) to trade
+ * fewer/taller merged fill spans (fewer MI_GFX_QuickFill hardware calls)
+ * against rasterization approximation error. Fixed at the max now that
+ * SDL_MMIYOO_GEOMETRY_DIRECT_WRITE removes the per-span hardware-call cost
+ * this traded against. */
+#define MMIYOO_SPAN_BAND_HEIGHT 32
+
 void
 MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
                                    const SDL_FPoint *p0,
@@ -253,7 +260,6 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
     int y;
     int span_capacity;
     int span_count;
-    int band_limit;
     int i;
     const int edge_tolerance = 1;
 
@@ -286,8 +292,6 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
     if (y_start > y_end) {
         return;
     }
-
-    band_limit = SDL_max(1, (int)data->span_band_height);
 
     span_capacity = y_end - y_start + 1;
     span_buffer = (SDL_Rect *)SDL_stack_alloc(SDL_Rect, span_capacity);
@@ -374,7 +378,7 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
         SDL_Rect merged = span_buffer[i];
         int band_height = 1;
 
-        while (band_height < band_limit && (i + band_height) < span_count) {
+        while (band_height < MMIYOO_SPAN_BAND_HEIGHT && (i + band_height) < span_count) {
             SDL_Rect next = span_buffer[i + band_height];
             int left_delta;
             int right_delta;

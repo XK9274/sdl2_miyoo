@@ -283,24 +283,6 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         MMIYOO_TexturePoolConfigure(pool_enabled, pool_max_bytes);
     }
 
-    data->span_band_height = 3;
-    {
-        const char *band_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_BAND_HEIGHT");
-        if (band_hint) {
-            int band = SDL_atoi(band_hint);
-            if (band < 1) {
-                band = 1;
-            } else if (band > 32) {
-                band = 32;
-            }
-            data->span_band_height = (Uint8)band;
-        }
-    }
-
-    SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
-                "MMIYOO geometry band height=%d",
-                (int)data->span_band_height);
-
     g_warned_copyex_angle = SDL_FALSE;
 
     if(data->initialized != SDL_FALSE) {

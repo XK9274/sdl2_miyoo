@@ -99,7 +99,6 @@ typedef struct MMIYOO_RenderData {
     Uint64 stats_span_pixels;
     Uint32 stats_max_span_height;
     Uint32 stats_max_span_width;
-    Uint8 span_band_height;
 
     /* CPU-write eligible untextured triangle spans directly into the mapped
      * window/back-buffer instead of one hardware fill call (+fence) per
