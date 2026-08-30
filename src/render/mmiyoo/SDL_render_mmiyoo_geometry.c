@@ -232,12 +232,9 @@ MMIYOO_SetupEdge(MMIYOO_Edge *edge, const SDL_FPoint *p0, const SDL_FPoint *p1)
 
 // Triangle filling via incremental edge walking.
 
-/* Was hint-configurable (SDL_MMIYOO_GEOMETRY_BAND_HEIGHT, 1-32) to trade
- * fewer/taller merged fill spans (fewer MI_GFX_QuickFill hardware calls)
- * against rasterization approximation error. Fixed at the max now that
- * SDL_MMIYOO_GEOMETRY_DIRECT_WRITE removes the per-span hardware-call cost
- * this traded against. */
-#define MMIYOO_SPAN_BAND_HEIGHT 32
+/* 1 = exact rasterization (no merged spans); each merged band lets a
+ * slanted edge drift up to edge_tolerance px per row. */
+#define MMIYOO_SPAN_BAND_HEIGHT 1
 
 void
 MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
