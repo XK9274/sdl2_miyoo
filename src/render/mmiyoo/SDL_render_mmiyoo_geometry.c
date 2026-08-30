@@ -408,7 +408,9 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
             }
         }
 
-        MMIYOO_ExecuteQuickFill(data, &merged, color);
+        if (!MMIYOO_TryDirectSpanFill(data, &merged, color)) {
+            MMIYOO_ExecuteQuickFill(data, &merged, color);
+        }
         i += band_height;
     }
 
@@ -463,6 +465,87 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
     } else {
         MMIYOO_LOG_WARN("QuickFill: MI_GFX_QuickFill failed (result=%d)", result);
     }
+}
+
+/* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path: CPU-write a merged fill span
+ * directly into the mapped window/back-buffer instead of dispatching a
+ * MI_GFX_QuickFill hardware call (+fence) for it. Returns SDL_FALSE (caller
+ * falls back to MMIYOO_ExecuteQuickFill, unchanged behavior) on anything not
+ * eligible -- fails closed. Only ever active for untextured triangle fills
+ * against the non-target-texture ARGB8888 surface; render-target textures
+ * have no virAddr on MI_GFX_Surface_t and stay on the hardware path. */
+SDL_bool
+MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+{
+    void *vir;
+    int fb_w;
+    int fb_h;
+    int dst_x;
+    int dst_y;
+    Uint32 stride;
+    Uint8 *base;
+    SDL_Rect written;
+    int row;
+    int col;
+
+    if (!data->direct_write_enabled) {
+        return SDL_FALSE;
+    }
+    if (data->is_target_texture) {
+        return SDL_FALSE;
+    }
+    if (data->current_target_surface.eColorFmt != E_MI_GFX_FMT_ARGB8888) {
+        return SDL_FALSE;
+    }
+    if (!dst || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
+        return SDL_FALSE;
+    }
+    vir = GFX_GetFrameBufferVirtual();
+    if (!vir) {
+        return SDL_FALSE;
+    }
+
+    /* RENDERCMD_CLEAR dispatches an async hardware QuickFill before geometry
+     * commands run -- without waiting for it first, that clear could
+     * complete after our CPU write and clobber it. Same precondition
+     * MMIYOO_UpdateTexture already enforces before overwriting a texture a
+     * GPU op might still be touching. Bounded to once per frame. */
+    if (!data->direct_write_used_this_frame) {
+        GFX_FlushTextureFences();
+        data->direct_write_used_this_frame = SDL_TRUE;
+    }
+
+    /* Repositions only (no rotation needed for a solid fill) to match
+     * QuickFill's 180-degree flip for non-texture targets. */
+    fb_w = MMIYOO_GetFramebufferWidth(data);
+    fb_h = MMIYOO_GetFramebufferHeight(data);
+    dst_x = fb_w - dst->x - dst->w;
+    dst_y = fb_h - dst->y - dst->h;
+
+    stride = data->current_target_surface.u32Stride;
+    base = (Uint8 *)vir;
+    for (row = 0; row < dst->h; ++row) {
+        Uint32 *pixels = (Uint32 *)(base + (size_t)(dst_y + row) * stride + (size_t)dst_x * 4);
+        for (col = 0; col < dst->w; ++col) {
+            pixels[col] = color;
+        }
+    }
+
+    written.x = dst_x;
+    written.y = dst_y;
+    written.w = dst->w;
+    written.h = dst->h;
+    if (!data->direct_write_dirty) {
+        data->direct_write_dirty_rect = written;
+    } else {
+        SDL_UnionRect(&data->direct_write_dirty_rect, &written, &data->direct_write_dirty_rect);
+    }
+    data->direct_write_dirty = SDL_TRUE;
+
+    return SDL_TRUE;
 }
 
 SDL_bool

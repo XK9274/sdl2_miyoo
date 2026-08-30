@@ -249,6 +249,13 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         }
     }
 
+    {
+        const char *direct_write_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_DIRECT_WRITE");
+        if (direct_write_hint && SDL_atoi(direct_write_hint) != 0) {
+            data->direct_write_enabled = SDL_TRUE;
+        }
+    }
+
     /* On by default; set SDL_MMIYOO_INTEGER_SCALE=0 to fall back to unscaled-blit-only behavior. */
     data->integer_scale_enabled = SDL_TRUE;
     {

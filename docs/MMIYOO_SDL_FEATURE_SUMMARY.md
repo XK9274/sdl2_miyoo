@@ -7,6 +7,7 @@
 - `SDL_MMIYOO_DEBUG` / `SDL_MMIYOO_DEBUG_VERBOSE` -- raise driver log verbosity
 - `SDL_MMIYOO_GEOMETRY_STATS` -- log per-present triangle/span stats
 - `SDL_MMIYOO_GEOMETRY_BAND_HEIGHT` -- triangle rasterizer span band height (1-32, default 3)
+- `SDL_MMIYOO_GEOMETRY_DIRECT_WRITE` -- CPU-write untextured triangle fill spans directly into the mapped window/back-buffer instead of one `MI_GFX_QuickFill` hardware call (+fence) per span. Off by default; render-target-texture draws are unaffected regardless. **Unsafe for a suite where a same-frame hardware GFX operation reads the window/back buffer as a source** (e.g. compositing a texture over already-drawn CPU triangles) -- such a read can observe stale pre-flush memory, since GPU/DMA bypasses CPU cache. A hardware *write* afterward is fine. Only enable for suites confirmed not to do this.
 - `SDL_MMIYOO_GEOMETRY_QUICKPATH` -- opt into skipping the duplicate blit from a glyph quad's second identical textured triangle
 - `SDL_MMIYOO_FRAME_TIMING` -- log per-second frame timing, including command queue, present, blit count, and command-category breakdown
 - `SDL_MMIYOO_TEXTURE_POOL` -- enable/disable the bounded MI_SYS texture-memory reuse pool (default enabled)
