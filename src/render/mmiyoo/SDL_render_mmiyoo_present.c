@@ -106,6 +106,70 @@ MMIYOO_UpdatePresentVSyncFlag(SDL_Renderer *renderer, SDL_bool renderer_vsync_re
     }
 }
 
+/* Computes the completed window's per-frame averages into both the log line
+ * and the SDL_MMIYOO_GetFrameTimingStats cache, so the two never drift. */
+static void
+MMIYOO_ComputeFrameTimingWindow(MMIYOO_RenderData *data, Uint64 freq, double window_s)
+{
+    const double frame_count = (double)data->timing_frames;
+    SDL_MMIYOO_FrameTimingStats stats;
+
+    stats.fps = frame_count / window_s;
+    stats.cmdqueue_ms_per_frame = (double)data->timing_command_queue_ticks * 1000.0 / (double)freq / frame_count;
+    stats.present_ms_per_frame = (double)data->timing_present_ticks * 1000.0 / (double)freq / frame_count;
+    stats.blits_per_frame = (double)data->timing_blit_calls / frame_count;
+    stats.fill_ms_per_frame = (double)data->timing_fill_ticks * 1000.0 / (double)freq / frame_count;
+    stats.copy_ms_per_frame = (double)data->timing_copy_ticks * 1000.0 / (double)freq / frame_count;
+    stats.geometry_ms_per_frame = (double)data->timing_geometry_ticks * 1000.0 / (double)freq / frame_count;
+    stats.lines_ms_per_frame = (double)data->timing_lines_ticks * 1000.0 / (double)freq / frame_count;
+    stats.misc_ms_per_frame = (double)data->timing_misc_ticks * 1000.0 / (double)freq / frame_count;
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
+                "MMIYOO frame timing: fps=%.1f cmdQueue=%.2fms/frame present=%.2fms/frame blits=%.1f/frame",
+                stats.fps, stats.cmdqueue_ms_per_frame, stats.present_ms_per_frame, stats.blits_per_frame);
+    SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
+                "MMIYOO cmdQueue breakdown: fill=%.2fms copy=%.2fms geometry=%.2fms lines=%.2fms misc=%.2fms (ms/frame)",
+                stats.fill_ms_per_frame, stats.copy_ms_per_frame, stats.geometry_ms_per_frame,
+                stats.lines_ms_per_frame, stats.misc_ms_per_frame);
+
+    data->timing_stats_cache = stats;
+    data->timing_stats_valid = SDL_TRUE;
+}
+
+static MMIYOO_RenderData *
+MMIYOO_GetRenderDataIfMMIYOO(SDL_Renderer *renderer)
+{
+    if (!renderer) {
+        return NULL;
+    }
+    if (SDL_strcmp(renderer->info.name, "MMIYOO") != 0) {
+        return NULL;
+    }
+    return (MMIYOO_RenderData *)renderer->driverdata;
+}
+
+SDL_bool
+SDL_MMIYOO_GetFrameTimingStats(SDL_Renderer *renderer, SDL_MMIYOO_FrameTimingStats *out)
+{
+    MMIYOO_RenderData *data = MMIYOO_GetRenderDataIfMMIYOO(renderer);
+    if (!data || !out || !data->collect_frame_timing || !data->timing_stats_valid) {
+        return SDL_FALSE;
+    }
+    *out = data->timing_stats_cache;
+    return SDL_TRUE;
+}
+
+SDL_bool
+SDL_MMIYOO_GetGeometryStats(SDL_Renderer *renderer, SDL_MMIYOO_GeometryStats *out)
+{
+    MMIYOO_RenderData *data = MMIYOO_GetRenderDataIfMMIYOO(renderer);
+    if (!data || !out || !data->collect_span_stats || !data->geometry_stats_valid) {
+        return SDL_FALSE;
+    }
+    *out = data->geometry_stats_cache;
+    return SDL_TRUE;
+}
+
 void MMIYOO_RenderPresent(SDL_Renderer *renderer)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
@@ -198,23 +262,8 @@ void MMIYOO_RenderPresent(SDL_Renderer *renderer)
                 data->timing_window_start_ticks = now;
             } else if (now - data->timing_window_start_ticks >= freq && data->timing_frames > 0) {
                 double window_s = (double)(now - data->timing_window_start_ticks) / (double)freq;
-                double frame_count = (double)data->timing_frames;
-                double fps = frame_count / window_s;
-                double cmdqueue_ms_per_frame = (double)data->timing_command_queue_ticks * 1000.0 / (double)freq / frame_count;
-                double present_ms_per_frame = (double)data->timing_present_ticks * 1000.0 / (double)freq / frame_count;
-                double blits_per_frame = (double)data->timing_blit_calls / frame_count;
-                double fill_ms = (double)data->timing_fill_ticks * 1000.0 / (double)freq / frame_count;
-                double copy_ms = (double)data->timing_copy_ticks * 1000.0 / (double)freq / frame_count;
-                double geometry_ms = (double)data->timing_geometry_ticks * 1000.0 / (double)freq / frame_count;
-                double lines_ms = (double)data->timing_lines_ticks * 1000.0 / (double)freq / frame_count;
-                double misc_ms = (double)data->timing_misc_ticks * 1000.0 / (double)freq / frame_count;
 
-                SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
-                            "MMIYOO frame timing: fps=%.1f cmdQueue=%.2fms/frame present=%.2fms/frame blits=%.1f/frame",
-                            fps, cmdqueue_ms_per_frame, present_ms_per_frame, blits_per_frame);
-                SDL_LogInfo(SDL_LOG_CATEGORY_RENDER,
-                            "MMIYOO cmdQueue breakdown: fill=%.2fms copy=%.2fms geometry=%.2fms lines=%.2fms misc=%.2fms (ms/frame)",
-                            fill_ms, copy_ms, geometry_ms, lines_ms, misc_ms);
+                MMIYOO_ComputeFrameTimingWindow(data, freq, window_s);
 
                 data->timing_command_queue_ticks = 0;
                 data->timing_present_ticks = 0;
@@ -231,6 +280,13 @@ void MMIYOO_RenderPresent(SDL_Renderer *renderer)
     }
 
     if (data->collect_span_stats) {
+        data->geometry_stats_cache.triangles = data->stats_triangles;
+        data->geometry_stats_cache.spans = data->stats_spans;
+        data->geometry_stats_cache.span_pixels = data->stats_span_pixels;
+        data->geometry_stats_cache.max_span_width = data->stats_max_span_width;
+        data->geometry_stats_cache.max_span_height = data->stats_max_span_height;
+        data->geometry_stats_valid = SDL_TRUE;
+
         if (data->stats_triangles > 0 && mmiyoo_debug_verbose) {
             const double triangles = (double)data->stats_triangles;
             const double spans = (double)data->stats_spans;
