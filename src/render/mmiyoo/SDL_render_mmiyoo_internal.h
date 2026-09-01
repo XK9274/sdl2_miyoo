@@ -27,6 +27,7 @@
 
 #include "SDL_rect.h"
 #include "SDL_render.h"
+#include "SDL_mmiyoo_stats.h"
 #include "../SDL_sysrender.h"
 #include "../../core/mmiyoo/SDL_mmiyoo.h"
 
@@ -100,6 +101,11 @@ typedef struct MMIYOO_RenderData {
     Uint32 stats_max_span_height;
     Uint32 stats_max_span_width;
 
+    /* Previous frame's span stats, captured just before the per-frame reset
+     * above, so SDL_MMIYOO_GetGeometryStats has something to return. */
+    SDL_bool geometry_stats_valid;
+    SDL_MMIYOO_GeometryStats geometry_stats_cache;
+
     /* CPU-write eligible untextured triangle spans directly into the mapped
      * window/back-buffer instead of one hardware fill call (+fence) per
      * band. Off by default. */
@@ -130,6 +136,11 @@ typedef struct MMIYOO_RenderData {
     Uint64 timing_geometry_ticks;
     Uint64 timing_lines_ticks;
     Uint64 timing_misc_ticks;
+
+    /* Last-completed 1-second timing window, captured alongside the log line
+     * so SDL_MMIYOO_GetFrameTimingStats returns the same numbers. */
+    SDL_bool timing_stats_valid;
+    SDL_MMIYOO_FrameTimingStats timing_stats_cache;
 
     /* SDL_MMIYOO_GEOMETRY_QUICKPATH hint: collapse a glyph quad's two
      * identical-rect triangles into one blit instead of two. Off by

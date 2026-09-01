@@ -36,6 +36,7 @@
 /* These headers have system specific definitions, so aren't included above */
 #include "SDL_syswm.h"
 #include "SDL_vulkan.h"
+#include "SDL_mmiyoo_stats.h"
 
 /* This is the version of the dynamic API. This doesn't match the SDL version
    and should not change until there's been a major revamp in API/ABI.
