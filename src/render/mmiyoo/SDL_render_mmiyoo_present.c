@@ -222,7 +222,6 @@ void MMIYOO_RenderPresent(SDL_Renderer *renderer)
          * hardware read that memory. The single-buffer fallback has no other
          * flush point, so this is load-bearing there, not just redundant. */
         MMIYOO_FlushDirectWriteDirty(data);
-        data->direct_write_used_this_frame = SDL_FALSE;
 
         if (!data->is_target_texture || data->texture_blitted_to_screen) {
             GFX_SwapBuffers(data->vsync);

@@ -145,6 +145,15 @@ void GFX_AddTextureFence(MI_U16 fence)
 #endif
 }
 
+SDL_bool GFX_HasPendingTextureFences(void)
+{
+#ifdef MMIYOO
+    return global_fence_count > 0 ? SDL_TRUE : SDL_FALSE;
+#else
+    return SDL_FALSE;
+#endif
+}
+
 static void MMIYOO_CrashHandler(int sig) {
     void *array[10];
     size_t size;

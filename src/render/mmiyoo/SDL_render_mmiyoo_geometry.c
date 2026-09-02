@@ -502,12 +502,11 @@ MMIYOO_DirectWriteBegin(MMIYOO_RenderData *data, void **out_vir, Uint32 *out_str
         return SDL_FALSE;
     }
 
-    /* Waits for any pending async hardware fill to finish before this CPU
-     * write, so it can't be clobbered by a fill that completes afterward.
-     * Bounded to once per frame. */
-    if (!data->direct_write_used_this_frame) {
+    /* Checked on every call, not latched once per frame -- a hardware fence
+     * queued between two direct-writes in the same frame must still be
+     * waited on before this write, or it can be clobbered by that write. */
+    if (GFX_HasPendingTextureFences()) {
         GFX_FlushTextureFences();
-        data->direct_write_used_this_frame = SDL_TRUE;
     }
 
     *out_vir = vir;
