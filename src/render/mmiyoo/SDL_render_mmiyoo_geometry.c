@@ -409,9 +409,7 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
             }
         }
 
-        if (!MMIYOO_TryDirectSpanFill(data, &merged, color)) {
-            MMIYOO_ExecuteQuickFill(data, &merged, color);
-        }
+        MMIYOO_Fill(data, &merged, color);
         i += band_height;
     }
 
@@ -465,6 +463,17 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
         GFX_AddTextureFence(fence);
     } else {
         MMIYOO_LOG_WARN("QuickFill: MI_GFX_QuickFill failed (result=%d)", result);
+    }
+}
+
+/* Solid-color rect fill: tries the CPU direct-write fast path first,
+ * falling back to the hardware QuickFill above when direct-write isn't
+ * eligible (render-target texture, non-ARGB8888 surface, hint disabled). */
+void
+MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+{
+    if (!MMIYOO_TryDirectSpanFill(data, dst, color)) {
+        MMIYOO_ExecuteQuickFill(data, dst, color);
     }
 }
 
