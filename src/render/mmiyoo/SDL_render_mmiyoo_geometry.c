@@ -517,6 +517,30 @@ MMIYOO_DirectWriteMarkDirty(MMIYOO_RenderData *data, const SDL_Rect *written)
     data->direct_write_dirty = SDL_TRUE;
 }
 
+/* Makes direct-write CPU fills visible to hardware before a GFX BitBlit
+ * reads the same framebuffer memory back for blending (e.g. a translucent
+ * overlay composited over freshly-filled triangle spans) -- without this,
+ * a blit later in the same frame can read stale, not-yet-cache-flushed rows. */
+void
+MMIYOO_FlushDirectWriteDirty(MMIYOO_RenderData *data)
+{
+    if (!data->direct_write_dirty) {
+        return;
+    }
+
+    {
+        void *dirty_vir = GFX_GetFrameBufferVirtual();
+        if (dirty_vir) {
+            Uint32 dirty_stride = data->current_target_surface.u32Stride;
+            Uint8 *dirty_ptr = (Uint8 *)dirty_vir + (size_t)data->direct_write_dirty_rect.y * dirty_stride;
+            size_t dirty_bytes = (size_t)data->direct_write_dirty_rect.h * dirty_stride;
+            MMIYOO_FlushInvCacheRange(dirty_ptr, dirty_bytes);
+        }
+    }
+    data->direct_write_dirty = SDL_FALSE;
+    SDL_zero(data->direct_write_dirty_rect);
+}
+
 /* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path: CPU-write a merged fill span
  * directly into the mapped window/back-buffer instead of dispatching a
  * MI_GFX_QuickFill hardware call (+fence) for it. */
