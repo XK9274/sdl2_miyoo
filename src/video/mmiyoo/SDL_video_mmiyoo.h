@@ -68,6 +68,7 @@ typedef struct MMIYOO_VideoInfo {
 void GFX_SetBackBufferGLESFormat(SDL_bool is_gles_rgba);
 void GFX_FlushTextureFences(void);
 void GFX_AddTextureFence(MI_U16 fence);
+SDL_bool GFX_HasPendingTextureFences(void);
 int GFX_Copy(const void *pixels,
              MI_PHY pixels_phy,
              SDL_Rect srcrect,

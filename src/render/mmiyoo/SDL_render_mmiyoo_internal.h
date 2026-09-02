@@ -110,7 +110,6 @@ typedef struct MMIYOO_RenderData {
      * window/back-buffer instead of one hardware fill call (+fence) per
      * band. Off by default. */
     SDL_bool direct_write_enabled;
-    SDL_bool direct_write_used_this_frame;  /* gates the once-per-frame pre-write hazard flush */
     SDL_bool direct_write_dirty;            /* gates the once-per-frame post-write cache flush before GFX_SwapBuffers */
     SDL_Rect direct_write_dirty_rect;       /* union bounding box, in framebuffer-memory coordinates */
 
