@@ -632,6 +632,13 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
         return 0;
     }
 
+    /* This copy may read the destination framebuffer back for blending
+     * (e.g. an alpha-blended overlay reading content underneath it) --
+     * make any earlier direct-write CPU fills visible to hardware first. */
+    if (!data->is_target_texture) {
+        MMIYOO_FlushDirectWriteDirty(data);
+    }
+
     rotated_width = SDL_max(1, (int)SDL_lroundf(rotated_width_f));
     rotated_height = SDL_max(1, (int)SDL_lroundf(rotated_height_f));
 
