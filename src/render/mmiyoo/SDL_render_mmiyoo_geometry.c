@@ -409,9 +409,7 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
             }
         }
 
-        if (!MMIYOO_TryDirectSpanFill(data, &merged, color)) {
-            MMIYOO_ExecuteQuickFill(data, &merged, color);
-        }
+        MMIYOO_Fill(data, &merged, color);
         i += band_height;
     }
 
@@ -468,6 +466,17 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
     }
 }
 
+/* Solid-color rect fill: tries the CPU direct-write fast path first,
+ * falling back to the hardware QuickFill above when direct-write isn't
+ * eligible (render-target texture, non-ARGB8888 surface, hint disabled). */
+void
+MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+{
+    if (!MMIYOO_TryDirectSpanFill(data, dst, color)) {
+        MMIYOO_ExecuteQuickFill(data, dst, color);
+    }
+}
+
 /* Shared eligibility check + once-per-frame hazard flush for both direct-
  * write paths. Fails closed unless writing the non-texture ARGB8888
  * surface -- render-target textures have no mapped virtual address. */
@@ -493,12 +502,11 @@ MMIYOO_DirectWriteBegin(MMIYOO_RenderData *data, void **out_vir, Uint32 *out_str
         return SDL_FALSE;
     }
 
-    /* Waits for any pending async hardware fill to finish before this CPU
-     * write, so it can't be clobbered by a fill that completes afterward.
-     * Bounded to once per frame. */
-    if (!data->direct_write_used_this_frame) {
+    /* Checked on every call, not latched once per frame -- a hardware fence
+     * queued between two direct-writes in the same frame must still be
+     * waited on before this write, or it can be clobbered by that write. */
+    if (GFX_HasPendingTextureFences()) {
         GFX_FlushTextureFences();
-        data->direct_write_used_this_frame = SDL_TRUE;
     }
 
     *out_vir = vir;

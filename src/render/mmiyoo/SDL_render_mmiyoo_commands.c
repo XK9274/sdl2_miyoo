@@ -126,7 +126,7 @@ MMIYOO_LineBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_Li
     if (!batch->active) {
         return;
     }
-    MMIYOO_ExecuteQuickFill(data, &batch->rect, color);
+    MMIYOO_Fill(data, &batch->rect, color);
     batch->active = SDL_FALSE;
 }
 
@@ -145,7 +145,7 @@ MMIYOO_RectBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_Re
     if (!batch->active) {
         return;
     }
-    MMIYOO_ExecuteQuickFill(data, &batch->rect, color);
+    MMIYOO_Fill(data, &batch->rect, color);
     batch->active = SDL_FALSE;
 }
 
@@ -886,7 +886,7 @@ MMIYOO_ProcessFillCommand(SDL_Renderer *renderer, MMIYOO_RenderData *data, const
             if (rect_batch.active) {
                 MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color);
             }
-            MMIYOO_ExecuteQuickFill(data, &dst, color);
+            MMIYOO_Fill(data, &dst, color);
             continue;
         }
 
@@ -1017,7 +1017,7 @@ MMIYOO_ProcessDrawLines(SDL_Renderer *renderer, MMIYOO_RenderData *data, const S
             }
 
             if (!SDL_RectEmpty(&clamped_rect)) {
-                MMIYOO_ExecuteQuickFill(data, &clamped_rect, color);
+                MMIYOO_Fill(data, &clamped_rect, color);
             }
             continue;
         }
@@ -1099,7 +1099,7 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
                         prepared_dst.h = SDL_max(1, (int)SDL_ceilf(tri->dstrect.h));
 
                         if (MMIYOO_PrepareDrawRect(renderer, data, &prepared_dst, NULL, NULL, NULL)) {
-                            MMIYOO_ExecuteQuickFill(data, &prepared_dst, MMIYOO_PackColor(fr, fg, fb, 255));
+                            MMIYOO_Fill(data, &prepared_dst, MMIYOO_PackColor(fr, fg, fb, 255));
                             used_quickfill = SDL_TRUE;
                         }
                     }
@@ -1203,7 +1203,7 @@ int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd, void 
             {
                 SDL_Rect bounds = MMIYOO_GetTargetBounds(data);
                 Uint32 color = MMIYOO_PackColor(cmd->data.color.r, cmd->data.color.g, cmd->data.color.b, cmd->data.color.a);
-                MMIYOO_ExecuteQuickFill(data, &bounds, color);
+                MMIYOO_Fill(data, &bounds, color);
                 break;
             }
 
