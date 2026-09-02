@@ -222,6 +222,7 @@ SDL_bool MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
 void MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 SDL_bool MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 SDL_bool MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data, float x0, float y0, float x1, float y1, Uint32 color);
+void MMIYOO_FlushDirectWriteDirty(MMIYOO_RenderData *data);
 
 /* --- commands.c public API (also wired directly into the SDL_Renderer vtable by
  * MMIYOO_CreateRenderer in the top-level file) --- */
