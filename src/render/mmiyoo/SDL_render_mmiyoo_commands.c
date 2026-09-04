@@ -578,6 +578,40 @@ int MMIYOO_QueueCopy(SDL_Renderer *renderer, SDL_RenderCommand *cmd, SDL_Texture
     return 0;
 }
 
+static SDL_bool
+MMIYOO_IsWholeOutputCopy(SDL_Renderer *renderer,
+                         const MMIYOO_RenderData *data,
+                         const SDL_Texture *texture,
+                         const SDL_Rect *src,
+                         const SDL_Rect *dst)
+{
+    SDL_Rect output;
+    int window_w = 0;
+    int window_h = 0;
+
+    if (src->x != 0 || src->y != 0 ||
+        src->w != texture->w || src->h != texture->h) {
+        return SDL_FALSE;
+    }
+
+    output = MMIYOO_GetTargetBounds(data);
+    if (dst->x == output.x && dst->y == output.y &&
+        dst->w == output.w && dst->h == output.h) {
+        return SDL_TRUE;
+    }
+
+    if (data->viewport_enabled &&
+        dst->x == data->viewport.x && dst->y == data->viewport.y &&
+        dst->w == data->viewport.w && dst->h == data->viewport.h) {
+        return SDL_TRUE;
+    }
+
+    SDL_GetWindowSize(renderer->window, &window_w, &window_h);
+    return window_w > 0 && window_h > 0 &&
+           dst->x == 0 && dst->y == 0 &&
+           dst->w == window_w && dst->h == window_h;
+}
+
 static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
                  SDL_Texture *texture,
                  const void *pixels,
@@ -608,6 +642,7 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     SDL_Rect prepared_dst;
     SDL_bool clip_enabled = SDL_FALSE;
     SDL_bool allow_src_adjust;
+    SDL_bool whole_output_copy;
     MI_GFX_Rotate_e base_rotation;
     MI_GFX_Rotate_e effective_rotation;
     MI_GFX_Mirror_e mirror;
@@ -688,7 +723,9 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     effective_rotation = MMIYOO_AddRotations(base_rotation, extra_rotation);
     mirror = MMIYOO_FlipToMirror(flip);
 
-    if (!data->is_target_texture) {
+    whole_output_copy = MMIYOO_IsWholeOutputCopy(renderer, data, texture, &src, &dst);
+
+    if (!data->is_target_texture && whole_output_copy) {
         int framebuffer_width = MMIYOO_GetFramebufferWidth(data);
         int framebuffer_height = MMIYOO_GetFramebufferHeight(data);
 
