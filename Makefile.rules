@@ -365,6 +365,9 @@ $(objects)/SDL_event_mmiyoo.lo: /workspace/sdl2/src/video/mmiyoo/SDL_event_mmiyo
 $(objects)/SDL_framebuffer_mmiyoo.lo: /workspace/sdl2/src/video/mmiyoo/SDL_framebuffer_mmiyoo.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
+$(objects)/SDL_mmiyoo_messagebox.lo: /workspace/sdl2/src/video/mmiyoo/SDL_mmiyoo_messagebox.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
 $(objects)/SDL_opengles_mmiyoo_context.lo: /workspace/sdl2/src/video/mmiyoo/SDL_opengles_mmiyoo_context.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 

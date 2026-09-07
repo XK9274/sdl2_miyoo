@@ -65,6 +65,7 @@
 #endif
 #include "SDL_framebuffer_mmiyoo.h"
 #include "SDL_video_mmiyoo_internal.h"
+#include "SDL_mmiyoo_messagebox.h"
 
 /* Device availability/creation, window creation/destruction, display-mode
  * setup, video init/quit, and ownership of the public MMiyooVideoInfo
@@ -196,6 +197,7 @@ static SDL_VideoDevice *MMIYOO_CreateDevice(int devindex)
     device->DestroyWindowFramebuffer = MMIYOO_DestroyWindowFramebuffer;
     device->DestroyWindow = MMIYOO_DestroyWindow;
     device->RaiseWindow = MMIYOO_RaiseWindow;
+    device->ShowMessageBox = MMIYOO_ShowMessageBox;
 
 #if SDL_VIDEO_OPENGL_EGL && SDL_VIDEO_OPENGL_ES2
     device->GL_LoadLibrary = glLoadLibrary;
