@@ -70,6 +70,10 @@ typedef struct MMIYOO_TextureData {
      * always be called with this, never with the (possibly smaller)
      * logical size above. */
     unsigned int alloc_size;
+
+    /* colorkey_value is a format-agnostic (r<<16)|(g<<8)|b triplet. */
+    SDL_bool colorkey_enabled;
+    Uint32 colorkey_value;
 } MMIYOO_TextureData;
 
 typedef struct MMIYOO_RenderData {
@@ -163,6 +167,14 @@ typedef struct MMIYOO_RenderData {
      * renderer's oversized window, so MMIYOO_RenderPresent doesn't retry
      * it every frame. */
     SDL_bool logical_size_applied;
+
+    /* Persistent 1x1 ARGB8888 MI_SYS surface used to fill via a hardware
+     * blit -- MI_GFX_QuickFill has no blend parameters, so a non-opaque or
+     * non-NONE-blend fill stretches this single pixel over the destination
+     * rect instead. */
+    MI_PHY fill_scratch_phy;
+    void *fill_scratch_vir;
+    unsigned int fill_scratch_alloc_size;
 } MMIYOO_RenderData;
 
 typedef struct {
@@ -205,7 +217,8 @@ void MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
                                const SDL_FPoint *p1,
                                const SDL_FPoint *p2,
                                const SDL_Rect *clip_rect,
-                               Uint32 color);
+                               Uint32 color,
+                               SDL_BlendMode blend_mode);
 Uint32 MMIYOO_PackColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a);
 int MMIYOO_FloatToPixel(float value);
 void MMIYOO_ApplyViewportToPoint(const MMIYOO_RenderData *data, float *x, float *y);
@@ -220,7 +233,8 @@ SDL_bool MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
                                 SDL_bool *clip_enabled);
 void MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 SDL_bool MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
-void MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
+void MMIYOO_FillViaBlit(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode);
+void MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode);
 SDL_bool MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data, float x0, float y0, float x1, float y1, Uint32 color);
 void MMIYOO_FlushDirectWriteDirty(MMIYOO_RenderData *data);
 

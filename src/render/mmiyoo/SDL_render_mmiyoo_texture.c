@@ -41,6 +41,7 @@
 #include "../../video/mmiyoo/SDL_video_mmiyoo.h"
 #include "../../core/mmiyoo/SDL_mmiyoo_pixelformat.h"
 #include "../../video/mmiyoo/SDL_event_mmiyoo.h"
+#include "SDL_mmiyoo_colorkey.h"
 #include "SDL_rect.h"
 #include "SDL_timer.h"
 #include "neon.h"
@@ -492,6 +493,25 @@ void MMIYOO_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 
 void MMIYOO_SetTextureScaleMode(SDL_Renderer *renderer, SDL_Texture *texture, SDL_ScaleMode scaleMode)
 {
+}
+
+SDL_bool
+SDL_MMIYOO_SetTextureColorKey(SDL_Texture *texture, SDL_bool enabled, Uint32 key)
+{
+    MMIYOO_TextureData *mmiyoo_texture;
+
+    if (!texture || !texture->renderer || SDL_strcmp(texture->renderer->info.name, "MMIYOO") != 0) {
+        return SDL_FALSE;
+    }
+
+    mmiyoo_texture = (MMIYOO_TextureData *)texture->driverdata;
+    if (!mmiyoo_texture) {
+        return SDL_FALSE;
+    }
+
+    mmiyoo_texture->colorkey_enabled = enabled;
+    mmiyoo_texture->colorkey_value = key & 0x00FFFFFFu;
+    return SDL_TRUE;
 }
 
 void MMIYOO_DestroyTexture(SDL_Renderer *renderer, SDL_Texture *texture)

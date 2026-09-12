@@ -857,3 +857,4 @@
 #define SDL_PremultiplyAlpha SDL_PremultiplyAlpha_REAL
 #define SDL_MMIYOO_GetFrameTimingStats SDL_MMIYOO_GetFrameTimingStats_REAL
 #define SDL_MMIYOO_GetGeometryStats SDL_MMIYOO_GetGeometryStats_REAL
+#define SDL_MMIYOO_SetTextureColorKey SDL_MMIYOO_SetTextureColorKey_REAL

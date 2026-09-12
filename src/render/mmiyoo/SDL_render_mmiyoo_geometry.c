@@ -242,7 +242,8 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
                                    const SDL_FPoint *p1,
                                    const SDL_FPoint *p2,
                                    const SDL_Rect *clip_rect,
-                                   Uint32 color)
+                                   Uint32 color,
+                                   SDL_BlendMode blend_mode)
 {
     MMIYOO_Edge edges[3];
     SDL_Rect *span_buffer;
@@ -409,7 +410,7 @@ MMIYOO_DrawFilledTriangle(MMIYOO_RenderData *data,
             }
         }
 
-        MMIYOO_Fill(data, &merged, color);
+        MMIYOO_Fill(data, &merged, color, blend_mode);
         i += band_height;
     }
 
@@ -434,6 +435,9 @@ MMIYOO_PackColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
     return (((Uint32)a) << 24) | (((Uint32)r) << 16) | (((Uint32)g) << 8) | (Uint32)b;
 }
 
+/* Opaque/NONE-blend fast path only -- MI_GFX_QuickFill has no blend
+ * parameters, so any other blend mode needs a different fill path
+ * entirely. */
 void
 MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
 {
@@ -466,14 +470,64 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
     }
 }
 
-/* Solid-color rect fill: tries the CPU direct-write fast path first,
- * falling back to the hardware QuickFill above when direct-write isn't
- * eligible (render-target texture, non-ARGB8888 surface, hint disabled). */
+/* MI_GFX_QuickFill has no blend parameters, so a non-opaque or non-NONE-
+ * blend fill goes through GFX_Copy instead, stretching a persistent 1x1
+ * ARGB8888 scratch pixel over the destination rect. */
 void
-MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+MMIYOO_FillViaBlit(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode)
 {
-    if (!MMIYOO_TryDirectSpanFill(data, dst, color)) {
-        MMIYOO_ExecuteQuickFill(data, dst, color);
+    SDL_Rect srcrect = {0, 0, 1, 1};
+    SDL_Rect hw_dst;
+    int result;
+    /* Keeps MI_GFX's 16-byte source-stride alignment check happy; the
+     * 1x1 source only ever reads offset 0, so the value is otherwise moot. */
+    const int scratch_pitch = 16;
+
+    if (!dst || dst->w <= 0 || dst->h <= 0 || !data->fill_scratch_vir) {
+        return;
+    }
+
+    *(Uint32 *)data->fill_scratch_vir = color;
+    MMIYOO_FlushInvCacheRange(data->fill_scratch_vir, sizeof(Uint32));
+
+    if (data->is_target_texture) {
+        hw_dst = *dst;
+    } else {
+        const int framebuffer_width = MMIYOO_GetFramebufferWidth(data);
+        const int framebuffer_height = MMIYOO_GetFramebufferHeight(data);
+        hw_dst.x = framebuffer_width - dst->x - dst->w;
+        hw_dst.y = framebuffer_height - dst->y - dst->h;
+        hw_dst.w = dst->w;
+        hw_dst.h = dst->h;
+    }
+
+    result = GFX_Copy(data->fill_scratch_vir, data->fill_scratch_phy, srcrect, hw_dst, scratch_pitch,
+                       E_MI_GFX_ROTATE_0, E_MI_GFX_MIRROR_NONE, blend_mode, &data->current_target_surface,
+                       NULL, SDL_FALSE,
+                       SDL_PIXELFORMAT_ARGB8888, E_MI_GFX_FMT_ARGB8888, 4,
+                       255, 255, 255, 255,
+                       SDL_FALSE, 0);
+    if (result != 0) {
+        MMIYOO_LOG_WARN("FillViaBlit: GFX_Copy failed (result=%d)", result);
+    }
+}
+
+/* Solid-color rect fill. Opaque fills under NONE or ordinary BLEND are
+ * overwrite-equivalent and use the cheap CPU direct-write/QuickFill paths;
+ * everything else (partial alpha, or ADD/MOD/MUL/composed modes even at
+ * full alpha) needs real hardware blending instead. */
+void
+MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode)
+{
+    SDL_bool opaque_equivalent = (blend_mode == SDL_BLENDMODE_NONE) ||
+                                  (blend_mode == SDL_BLENDMODE_BLEND && (color >> 24) == 0xFF);
+
+    if (opaque_equivalent) {
+        if (!MMIYOO_TryDirectSpanFill(data, dst, color)) {
+            MMIYOO_ExecuteQuickFill(data, dst, color);
+        }
+    } else {
+        MMIYOO_FillViaBlit(data, dst, color, blend_mode);
     }
 }
 
