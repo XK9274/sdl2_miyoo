@@ -49,7 +49,10 @@ MI_GFX_ColorFmt_e MMIYOO_SDLToMIGfxFormat(Uint32 sdl_format, int *bits_per_pixel
         case SDL_PIXELFORMAT_RGBA8888:
             *bits_per_pixel = 32;
             *format_name = "RGBA8888->ARGB8888";
-            /* No MI_GFX format matches RGBA8888's real memory order (A,B,G,R); this swaps R/B. */
+            /* Confirmed on-device: the vendor's own RGBA8888 enum entry does
+             * not decode sanely either (worse than a simple R/B swap -- full
+             * channel corruption), so this intentionally still swaps R/B via
+             * ARGB8888 rather than using it. */
             return E_MI_GFX_FMT_ARGB8888;
 
         case SDL_PIXELFORMAT_ABGR8888:
