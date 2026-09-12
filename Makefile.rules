@@ -416,6 +416,9 @@ $(objects)/SDL_mmiyoo_display.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_dis
 $(objects)/SDL_mmiyoo_input.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_input.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 
+$(objects)/SDL_mmiyoo_pixelformat.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_pixelformat.c $(objects)/.created
+	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
+
 $(objects)/SDL_mmiyoo_power.lo: /workspace/sdl2/src/core/mmiyoo/SDL_mmiyoo_power.c $(objects)/.created
 	$(RUN_CMD_CC)$(LIBTOOL) --tag=CC --mode=compile $(CC) $(CFLAGS) $(EXTRA_CFLAGS) -MMD -MT $@ -c $< -o $@
 

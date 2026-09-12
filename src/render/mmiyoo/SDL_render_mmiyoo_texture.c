@@ -39,6 +39,7 @@
 #include "../SDL_sysrender.h"
 #include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../../video/mmiyoo/SDL_video_mmiyoo.h"
+#include "../../core/mmiyoo/SDL_mmiyoo_pixelformat.h"
 #include "../../video/mmiyoo/SDL_event_mmiyoo.h"
 #include "SDL_rect.h"
 #include "SDL_timer.h"
@@ -182,63 +183,6 @@ int MMIYOO_DMABlitTextureToTexture(MMIYOO_TextureData *src_texture, SDL_Rect *sr
     mi_dst_rect.u16Height = dst_rect ? dst_rect->h : dst_texture->height;
 
     return MI_SYS_BufBlitPa(&dst_frame, &mi_dst_rect, &src_frame, &mi_src_rect);
-}
-
-static MI_GFX_ColorFmt_e MMIYOO_SDLToMIGfxFormat(Uint32 sdl_format, int *bits_per_pixel, const char **format_name) {
-    switch(sdl_format) {
-        case SDL_PIXELFORMAT_RGB565:
-            *bits_per_pixel = 16;
-            *format_name = "RGB565";
-            return E_MI_GFX_FMT_RGB565;
-            
-        case SDL_PIXELFORMAT_BGR565:
-            *bits_per_pixel = 16;
-            *format_name = "BGR565";
-            return E_MI_GFX_FMT_BGR565;
-            
-        case SDL_PIXELFORMAT_ARGB8888:
-            *bits_per_pixel = 32;
-            *format_name = "ARGB8888";
-            return E_MI_GFX_FMT_ARGB8888;
-            
-        case SDL_PIXELFORMAT_RGBA8888:
-            *bits_per_pixel = 32;
-            *format_name = "RGBA8888->ARGB8888";
-            /* No MI_GFX format matches RGBA8888's real memory order (A,B,G,R); this swaps R/B. */
-            return E_MI_GFX_FMT_ARGB8888;
-            
-        case SDL_PIXELFORMAT_ABGR8888:
-            *bits_per_pixel = 32;
-            *format_name = "ABGR8888";
-            /* TODO: dev-tools/pixel-format-probe (mm-buildbot) shows this decodes as if it were ARGB8888 -- needs investigation. */
-            return E_MI_GFX_FMT_ABGR8888;
-
-        case SDL_PIXELFORMAT_BGRA8888:
-            *bits_per_pixel = 32;
-            *format_name = "BGRA8888";
-            /* TODO: also decodes as if ARGB8888, same as ABGR8888 above -- needs investigation. */
-            return E_MI_GFX_FMT_BGRA8888;
-            
-        case SDL_PIXELFORMAT_ARGB1555:
-            *bits_per_pixel = 16;
-            *format_name = "ARGB1555";
-            return E_MI_GFX_FMT_ARGB1555;
-            
-        case SDL_PIXELFORMAT_ARGB4444:
-            *bits_per_pixel = 16;
-            *format_name = "ARGB4444";
-            return E_MI_GFX_FMT_ARGB4444;
-            
-        case SDL_PIXELFORMAT_RGBA4444:
-            *bits_per_pixel = 16;
-            *format_name = "RGBA4444";
-            return E_MI_GFX_FMT_RGBA4444;
-            
-        default:
-            *bits_per_pixel = 32;
-            *format_name = "ARGB8888 (fallback)";
-            return E_MI_GFX_FMT_ARGB8888;
-    }
 }
 
 /* Best-fit scan: smallest cached block with alloc_size >= requested_size,

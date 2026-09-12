@@ -59,6 +59,7 @@
 #include "SDL_video_mmiyoo.h"
 #include "SDL_event_mmiyoo.h"
 #include "SDL_video_mmiyoo_internal.h"
+#include "../../core/mmiyoo/SDL_mmiyoo_pixelformat.h"
 
 /* Framebuffer metrics, system/GFX init+teardown, framebuffer init/uninit,
  * shared MI_GFX copy/blit configuration+execution (used by the renderer and
@@ -507,60 +508,11 @@ int GFX_Copy(const void *pixels,
     }
 
     if (!format_supported) {
-        switch(src_format) {
-            case SDL_PIXELFORMAT_RGB565:
-                mi_src_format = E_MI_GFX_FMT_RGB565;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_BGR565:
-                mi_src_format = E_MI_GFX_FMT_BGR565;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ARGB8888:
-                mi_src_format = E_MI_GFX_FMT_ARGB8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_RGBA8888:
-                mi_src_format = E_MI_GFX_FMT_ARGB8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ABGR8888:
-                mi_src_format = E_MI_GFX_FMT_ABGR8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_BGRA8888:
-                mi_src_format = E_MI_GFX_FMT_BGRA8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ARGB1555:
-                mi_src_format = E_MI_GFX_FMT_ARGB1555;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ARGB4444:
-                mi_src_format = E_MI_GFX_FMT_ARGB4444;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_RGBA4444:
-                mi_src_format = E_MI_GFX_FMT_RGBA4444;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            default:
-                break;
-        }
-    }
+        int bits_per_pixel;
+        const char *format_name;
 
-    if (!format_supported) {
-        mi_src_format = E_MI_GFX_FMT_ARGB8888;
-        src_bytes_per_pixel = 4;
+        mi_src_format = MMIYOO_SDLToMIGfxFormat(src_format, &bits_per_pixel, &format_name);
+        src_bytes_per_pixel = (Uint32)(bits_per_pixel / 8);
     }
 
     if (!target_surface) {
