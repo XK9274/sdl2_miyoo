@@ -487,8 +487,9 @@ MMIYOO_FillViaBlit(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, S
         return;
     }
 
+    /* fill_scratch_vir is mapped uncached, so this write is visible to the
+     * hardware without a separate flush. */
     *(Uint32 *)data->fill_scratch_vir = color;
-    MMIYOO_FlushInvCacheRange(data->fill_scratch_vir, sizeof(Uint32));
 
     if (data->is_target_texture) {
         hw_dst = *dst;

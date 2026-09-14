@@ -331,7 +331,10 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
     }
 
     if (MI_SYS_MMA_Alloc(NULL, MMIYOO_SYS_ALIGNMENT, &data->fill_scratch_phy) == MI_SUCCESS) {
-        if (MI_SYS_Mmap(data->fill_scratch_phy, MMIYOO_SYS_ALIGNMENT, &data->fill_scratch_vir, TRUE) == MI_SUCCESS) {
+        /* Uncached: written fresh before every blit and never read back by
+         * the CPU, so skipping the cache entirely avoids a flush syscall on
+         * every non-opaque fill. */
+        if (MI_SYS_Mmap(data->fill_scratch_phy, MMIYOO_SYS_ALIGNMENT, &data->fill_scratch_vir, FALSE) == MI_SUCCESS) {
             data->fill_scratch_alloc_size = MMIYOO_SYS_ALIGNMENT;
         } else {
             MI_SYS_MMA_Free(data->fill_scratch_phy);
