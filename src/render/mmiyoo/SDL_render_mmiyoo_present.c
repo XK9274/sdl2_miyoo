@@ -257,7 +257,22 @@ void MMIYOO_RenderPresent(SDL_Renderer *renderer)
             SDL_LogDebug(SDL_LOG_CATEGORY_RENDER,
                          "SCALEDBG RenderPresent: window=%dx%d exceeds framebuffer=%dx%d, applying SDL_RenderSetLogicalSize",
                          window_w, window_h, data->framebuffer_width, data->framebuffer_height);
-            if (SDL_RenderSetLogicalSize(renderer, window_w, window_h) != 0) {
+            if (data->stretch_enabled) {
+                SDL_Rect full_output = {0, 0, data->framebuffer_width, data->framebuffer_height};
+                float scale_x = (float)data->framebuffer_width / (float)window_w;
+                float scale_y = (float)data->framebuffer_height / (float)window_h;
+
+                SDL_LogDebug(SDL_LOG_CATEGORY_RENDER,
+                             "SCALEDBG RenderPresent: SDL_MMIYOO_STRETCH=1, window=%dx%d -> fb=%dx%d (scale %.4fx%.4f)",
+                             window_w, window_h, data->framebuffer_width, data->framebuffer_height,
+                             scale_x, scale_y);
+
+                if (SDL_RenderSetViewport(renderer, &full_output) != 0 ||
+                    SDL_RenderSetScale(renderer, scale_x, scale_y) != 0) {
+                    SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                                "MMIYOO: stretch scale setup failed: %s", SDL_GetError());
+                }
+            } else if (SDL_RenderSetLogicalSize(renderer, window_w, window_h) != 0) {
                 SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
                             "MMIYOO: SDL_RenderSetLogicalSize(%d,%d) failed: %s",
                             window_w, window_h, SDL_GetError());
