@@ -281,6 +281,17 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         }
     }
 
+    /* Off by default (letterbox, unchanged behavior); set
+     * SDL_MMIYOO_STRETCH=1 to fill the panel on both axes independently
+     * instead of preserving aspect ratio. */
+    data->stretch_enabled = SDL_FALSE;
+    {
+        const char *stretch_hint = SDL_GetHint("SDL_MMIYOO_STRETCH");
+        if (stretch_hint && SDL_atoi(stretch_hint) != 0) {
+            data->stretch_enabled = SDL_TRUE;
+        }
+    }
+
     {
         SDL_bool pool_enabled = SDL_TRUE;
         size_t pool_max_bytes = MMIYOO_TEXTURE_POOL_DEFAULT_MAX_BYTES;

@@ -168,6 +168,12 @@ typedef struct MMIYOO_RenderData {
      * it every frame. */
     SDL_bool logical_size_applied;
 
+    /* SDL_MMIYOO_STRETCH hint (off by default): when set to a nonzero
+     * value, fills the panel on both axes independently instead of the
+     * default aspect-preserving letterbox. Read once at renderer
+     * creation, not re-read mid-run. */
+    SDL_bool stretch_enabled;
+
     /* Persistent 1x1 ARGB8888 MI_SYS surface used to fill via a hardware
      * blit -- MI_GFX_QuickFill has no blend parameters, so a non-opaque or
      * non-NONE-blend fill stretches this single pixel over the destination
