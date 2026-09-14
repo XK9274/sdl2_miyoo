@@ -772,6 +772,13 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
         }
     }
 
+    if (!used_integer_scale && !used_downscale &&
+        MMIYOO_TryDirectCopy(data, src_texture_data, pixels, pitch, &src, &dst,
+                             blend_mode, extra_rotation, flip,
+                             mod_r, mod_g, mod_b, mod_a)) {
+        return 0;
+    }
+
     hw_dst = dst;
     hw_clip = clip_rect;
 
