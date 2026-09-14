@@ -233,6 +233,7 @@ SDL_bool MMIYOO_PrepareDrawRect(SDL_Renderer *renderer,
                                 SDL_bool *clip_enabled);
 void MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 SDL_bool MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
+SDL_bool MMIYOO_TryDirectBlendFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color);
 void MMIYOO_FillViaBlit(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode);
 void MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode);
 SDL_bool MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data, float x0, float y0, float x1, float y1, Uint32 color);

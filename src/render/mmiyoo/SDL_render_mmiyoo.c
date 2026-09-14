@@ -263,10 +263,12 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         }
     }
 
+    /* On by default; set SDL_MMIYOO_GEOMETRY_DIRECT_WRITE=0 to opt out. */
+    data->direct_write_enabled = SDL_TRUE;
     {
         const char *direct_write_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_DIRECT_WRITE");
-        if (direct_write_hint && SDL_atoi(direct_write_hint) != 0) {
-            data->direct_write_enabled = SDL_TRUE;
+        if (direct_write_hint && SDL_atoi(direct_write_hint) == 0) {
+            data->direct_write_enabled = SDL_FALSE;
         }
     }
 

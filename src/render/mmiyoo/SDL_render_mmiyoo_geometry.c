@@ -513,20 +513,32 @@ MMIYOO_FillViaBlit(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, S
     }
 }
 
+/* Below this pixel count, a CPU NEON blend beats MI_GFX_BitBlit's fixed
+ * per-dispatch cost with real margin; on-device timing put the crossover
+ * at ~5,000px with no margin there, so this is set well below it rather
+ * than at the wash point itself. */
+#define MMIYOO_DIRECT_BLEND_FILL_MAX_PIXELS 2000
+
 /* Solid-color rect fill. Opaque fills under NONE or ordinary BLEND are
  * overwrite-equivalent and use the cheap CPU direct-write/QuickFill paths;
- * everything else (partial alpha, or ADD/MOD/MUL/composed modes even at
- * full alpha) needs real hardware blending instead. */
+ * a small plain-BLEND partial-alpha fill uses a CPU NEON blend instead of
+ * the hardware blitter; everything else (large partial-alpha fills, or
+ * ADD/MOD/MUL/composed modes even at full alpha) needs real hardware
+ * blending. */
 void
 MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_BlendMode blend_mode)
 {
     SDL_bool opaque_equivalent = (blend_mode == SDL_BLENDMODE_NONE) ||
                                   (blend_mode == SDL_BLENDMODE_BLEND && (color >> 24) == 0xFF);
+    SDL_bool small_blend_fill = (blend_mode == SDL_BLENDMODE_BLEND) && dst &&
+                                 ((Sint64)dst->w * dst->h <= MMIYOO_DIRECT_BLEND_FILL_MAX_PIXELS);
 
     if (opaque_equivalent) {
         if (!MMIYOO_TryDirectSpanFill(data, dst, color)) {
             MMIYOO_ExecuteQuickFill(data, dst, color);
         }
+    } else if (small_blend_fill && MMIYOO_TryDirectBlendFill(data, dst, color)) {
+        /* handled */
     } else {
         MMIYOO_FillViaBlit(data, dst, color, blend_mode);
     }
@@ -642,6 +654,46 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
             pixels[col] = color;
         }
     }
+
+    written.x = dst_x;
+    written.y = dst_y;
+    written.w = dst->w;
+    written.h = dst->h;
+    MMIYOO_DirectWriteMarkDirty(data, &written);
+
+    return SDL_TRUE;
+}
+
+/* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path for small partial-alpha fills:
+ * CPU-blend a merged fill span directly into the mapped window/back-buffer
+ * instead of dispatching a MI_GFX_BitBlit (+fence) for it. */
+SDL_bool
+MMIYOO_TryDirectBlendFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color)
+{
+    void *vir;
+    Uint32 stride;
+    int fb_w;
+    int fb_h;
+    int dst_x;
+    int dst_y;
+    SDL_Rect written;
+
+    if (!dst || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (!MMIYOO_DirectWriteBegin(data, &vir, &stride)) {
+        return SDL_FALSE;
+    }
+
+    /* Repositions only (no rotation needed for a solid fill) to match
+     * QuickFill's 180-degree flip for non-texture targets. */
+    fb_w = MMIYOO_GetFramebufferWidth(data);
+    fb_h = MMIYOO_GetFramebufferHeight(data);
+    dst_x = fb_w - dst->x - dst->w;
+    dst_y = fb_h - dst->y - dst->h;
+
+    blend_solid_n32((Uint8 *)vir + (size_t)dst_y * stride + (size_t)dst_x * 4,
+                     color, (Uint32)dst->w, (Uint32)dst->h, stride);
 
     written.x = dst_x;
     written.y = dst_y;
