@@ -55,7 +55,7 @@ SDL_bool g_warned_copyex_angle = SDL_FALSE;
 
 /* Forward declaration: MMIYOO_LineBatchAccumulate calls this before its own
  * definition appears further down the file. */
-static void MMIYOO_LineBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_LineBatch *batch, Uint32 color);
+static void MMIYOO_LineBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_LineBatch *batch, Uint32 color, SDL_BlendMode blend_mode);
 
 static void
 MMIYOO_LineBatchReset(MMIYOO_LineBatch *batch)
@@ -71,7 +71,8 @@ MMIYOO_LineBatchAccumulate(SDL_Renderer *renderer,
                            MMIYOO_LineBatch *batch,
                            const SDL_Rect *rect,
                            SDL_bool vertical,
-                           Uint32 color)
+                           Uint32 color,
+                           SDL_BlendMode blend_mode)
 {
     if (!batch->active) {
         batch->rect = *rect;
@@ -81,7 +82,7 @@ MMIYOO_LineBatchAccumulate(SDL_Renderer *renderer,
     }
 
     if (batch->vertical != vertical) {
-        MMIYOO_LineBatchFlush(renderer, data, batch, color);
+        MMIYOO_LineBatchFlush(renderer, data, batch, color, blend_mode);
         batch->rect = *rect;
         batch->vertical = vertical;
         batch->active = SDL_TRUE;
@@ -90,7 +91,7 @@ MMIYOO_LineBatchAccumulate(SDL_Renderer *renderer,
 
     if (vertical) {
         if (rect->x != batch->rect.x) {
-            MMIYOO_LineBatchFlush(renderer, data, batch, color);
+            MMIYOO_LineBatchFlush(renderer, data, batch, color, blend_mode);
             batch->rect = *rect;
             batch->vertical = vertical;
             batch->active = SDL_TRUE;
@@ -104,7 +105,7 @@ MMIYOO_LineBatchAccumulate(SDL_Renderer *renderer,
         }
     } else {
         if (rect->y != batch->rect.y) {
-            MMIYOO_LineBatchFlush(renderer, data, batch, color);
+            MMIYOO_LineBatchFlush(renderer, data, batch, color, blend_mode);
             batch->rect = *rect;
             batch->vertical = vertical;
             batch->active = SDL_TRUE;
@@ -120,13 +121,13 @@ MMIYOO_LineBatchAccumulate(SDL_Renderer *renderer,
 }
 
 static void
-MMIYOO_LineBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_LineBatch *batch, Uint32 color)
+MMIYOO_LineBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_LineBatch *batch, Uint32 color, SDL_BlendMode blend_mode)
 {
     (void)renderer;
     if (!batch->active) {
         return;
     }
-    MMIYOO_Fill(data, &batch->rect, color);
+    MMIYOO_Fill(data, &batch->rect, color, blend_mode);
     batch->active = SDL_FALSE;
 }
 
@@ -139,13 +140,13 @@ MMIYOO_RectBatchReset(MMIYOO_RectBatch *batch)
 }
 
 static void
-MMIYOO_RectBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_RectBatch *batch, Uint32 color)
+MMIYOO_RectBatchFlush(SDL_Renderer *renderer, MMIYOO_RenderData *data, MMIYOO_RectBatch *batch, Uint32 color, SDL_BlendMode blend_mode)
 {
     (void)renderer;
     if (!batch->active) {
         return;
     }
-    MMIYOO_Fill(data, &batch->rect, color);
+    MMIYOO_Fill(data, &batch->rect, color, blend_mode);
     batch->active = SDL_FALSE;
 }
 
@@ -154,7 +155,8 @@ MMIYOO_RectBatchAccumulate(SDL_Renderer *renderer,
                            MMIYOO_RenderData *data,
                            MMIYOO_RectBatch *batch,
                            const SDL_Rect *rect,
-                           Uint32 color)
+                           Uint32 color,
+                           SDL_BlendMode blend_mode)
 {
     if (!batch->active) {
         batch->rect = *rect;
@@ -185,7 +187,7 @@ MMIYOO_RectBatchAccumulate(SDL_Renderer *renderer,
         }
     }
 
-    MMIYOO_RectBatchFlush(renderer, data, batch, color);
+    MMIYOO_RectBatchFlush(renderer, data, batch, color, blend_mode);
     batch->rect = *rect;
     batch->horizontal = (rect->w >= rect->h);
     batch->active = SDL_TRUE;
@@ -814,7 +816,8 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     copy_result = GFX_Copy(pixels, src_phy, src, hw_dst, pitch, (int)effective_rotation, mirror, blend_mode, &data->current_target_surface,
                            clip_enabled ? &hw_clip : NULL, clip_enabled,
                            texture->format, src_texture_data->mi_format, src_texture_data->bytes_per_pixel,
-                           mod_r, mod_g, mod_b, mod_a);
+                           mod_r, mod_g, mod_b, mod_a,
+                           src_texture_data->colorkey_enabled, src_texture_data->colorkey_value);
     if (copy_result != 0) {
         MMIYOO_LOG_WARN("QueueCopy: GFX_Copy failed (result=%d)", copy_result);
     }
@@ -885,6 +888,7 @@ MMIYOO_ProcessFillCommand(SDL_Renderer *renderer, MMIYOO_RenderData *data, const
     const int count = (int)cmd->data.draw.count;
     SDL_Rect *rects;
     Uint32 color;
+    SDL_BlendMode blend_mode = cmd->data.draw.blend;
     int i;
     MMIYOO_LineBatch skinny_batch;
     MMIYOO_RectBatch rect_batch;
@@ -918,34 +922,34 @@ MMIYOO_ProcessFillCommand(SDL_Renderer *renderer, MMIYOO_RenderData *data, const
 
         if (dst.w == 1 && dst.h == 1) {
             if (skinny_batch.active) {
-                MMIYOO_LineBatchFlush(renderer, data, &skinny_batch, color);
+                MMIYOO_LineBatchFlush(renderer, data, &skinny_batch, color, blend_mode);
             }
             if (rect_batch.active) {
-                MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color);
+                MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color, blend_mode);
             }
-            MMIYOO_Fill(data, &dst, color);
+            MMIYOO_Fill(data, &dst, color, blend_mode);
             continue;
         }
 
         if (dst.w == 1 || dst.h == 1) {
             SDL_bool vertical = (dst.w == 1);
             if (rect_batch.active) {
-                MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color);
+                MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color, blend_mode);
             }
-            MMIYOO_LineBatchAccumulate(renderer, data, &skinny_batch, &dst, vertical, color);
+            MMIYOO_LineBatchAccumulate(renderer, data, &skinny_batch, &dst, vertical, color, blend_mode);
         } else {
             if (skinny_batch.active) {
-                MMIYOO_LineBatchFlush(renderer, data, &skinny_batch, color);
+                MMIYOO_LineBatchFlush(renderer, data, &skinny_batch, color, blend_mode);
             }
-            MMIYOO_RectBatchAccumulate(renderer, data, &rect_batch, &dst, color);
+            MMIYOO_RectBatchAccumulate(renderer, data, &rect_batch, &dst, color, blend_mode);
         }
     }
 
     if (skinny_batch.active) {
-        MMIYOO_LineBatchFlush(renderer, data, &skinny_batch, color);
+        MMIYOO_LineBatchFlush(renderer, data, &skinny_batch, color, blend_mode);
     }
     if (rect_batch.active) {
-        MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color);
+        MMIYOO_RectBatchFlush(renderer, data, &rect_batch, color, blend_mode);
     }
 }
 
@@ -955,6 +959,7 @@ MMIYOO_ProcessDrawLines(SDL_Renderer *renderer, MMIYOO_RenderData *data, const S
     int count = (int)cmd->data.draw.count;
     SDL_FPoint *points;
     Uint32 color;
+    SDL_BlendMode blend_mode = cmd->data.draw.blend;
     int i;
 
     (void)renderer;
@@ -1054,7 +1059,7 @@ MMIYOO_ProcessDrawLines(SDL_Renderer *renderer, MMIYOO_RenderData *data, const S
             }
 
             if (!SDL_RectEmpty(&clamped_rect)) {
-                MMIYOO_Fill(data, &clamped_rect, color);
+                MMIYOO_Fill(data, &clamped_rect, color, blend_mode);
             }
             continue;
         }
@@ -1101,16 +1106,17 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
         for (t = 0; t < texdata->tri_count; ++t) {
             MMIYOO_GeometryTextureTri *tri = &tris[t];
             SDL_FPoint center;
-            SDL_bool used_quickfill = SDL_FALSE;
+            SDL_bool used_fill_path = SDL_FALSE;
 
             if (tri->skip) {
                 continue;
             }
 
-            /* 1x1 opaque source texture: fill with QuickFill instead of a
-             * texture blit. Opaque-only since MI_GFX_QuickFill has no blend
-             * flags. Uses the triangle's bounding box, not exact coverage,
-             * so a non-rectangular triangle can be over-painted slightly. */
+            /* 1x1 opaque source texture: fill instead of a texture blit --
+             * the fill path itself handles any blend mode the hardware
+             * quick-fill can't represent. Uses the triangle's bounding box,
+             * not exact coverage, so a non-rectangular triangle can be
+             * over-painted slightly. */
             if (cmd->data.draw.texture->w == 1 && cmd->data.draw.texture->h == 1) {
                 MMIYOO_TextureData *tex1x1 = (MMIYOO_TextureData *)cmd->data.draw.texture->driverdata;
                 if (tex1x1 && tex1x1->virAddr && tex1x1->bytes_per_pixel == 4 &&
@@ -1136,14 +1142,14 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
                         prepared_dst.h = SDL_max(1, (int)SDL_ceilf(tri->dstrect.h));
 
                         if (MMIYOO_PrepareDrawRect(renderer, data, &prepared_dst, NULL, NULL, NULL)) {
-                            MMIYOO_Fill(data, &prepared_dst, MMIYOO_PackColor(fr, fg, fb, 255));
-                            used_quickfill = SDL_TRUE;
+                            MMIYOO_Fill(data, &prepared_dst, MMIYOO_PackColor(fr, fg, fb, 255), cmd->data.draw.blend);
+                            used_fill_path = SDL_TRUE;
                         }
                     }
                 }
             }
 
-            if (used_quickfill) {
+            if (used_fill_path) {
                 continue;
             }
 
@@ -1211,7 +1217,7 @@ MMIYOO_ProcessGeometry(SDL_Renderer *renderer, MMIYOO_RenderData *data, const SD
             continue;
         }
 
-        MMIYOO_DrawFilledTriangle(data, &p0, &p1, &p2, &clipped_bounds, packed_color);
+        MMIYOO_DrawFilledTriangle(data, &p0, &p1, &p2, &clipped_bounds, packed_color, cmd->data.draw.blend);
     }
 }
 
@@ -1240,7 +1246,8 @@ int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd, void 
             {
                 SDL_Rect bounds = MMIYOO_GetTargetBounds(data);
                 Uint32 color = MMIYOO_PackColor(cmd->data.color.r, cmd->data.color.g, cmd->data.color.b, cmd->data.color.a);
-                MMIYOO_Fill(data, &bounds, color);
+                /* SDL_RenderClear always acts as SDL_BLENDMODE_NONE, regardless of the renderer's set blend mode. */
+                MMIYOO_Fill(data, &bounds, color, SDL_BLENDMODE_NONE);
                 break;
             }
 

@@ -158,7 +158,8 @@ MMIYOO_GLES_SwapWindow_PBuffer(_THIS)
                  E_MI_GFX_ROTATE_0, E_MI_GFX_MIRROR_HORIZONTAL, SDL_BLENDMODE_NONE,
                  NULL, NULL, SDL_FALSE,
                  0, E_MI_GFX_FMT_ABGR8888, 4,
-                 255, 255, 255, 255) != 0) {
+                 255, 255, 255, 255,
+                 SDL_FALSE, 0) != 0) {
         SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "MMIYOO GLES: GFX_Copy present blit failed");
     }
 

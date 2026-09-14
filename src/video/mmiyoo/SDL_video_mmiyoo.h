@@ -86,7 +86,9 @@ int GFX_Copy(const void *pixels,
              Uint8 mod_r,
              Uint8 mod_g,
              Uint8 mod_b,
-             Uint8 mod_a);
+             Uint8 mod_a,
+             SDL_bool colorkey_enabled,
+             Uint32 colorkey_value);
 
 // Single/double buffer management
 MI_PHY GFX_GetFrameBuffer(void);

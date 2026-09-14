@@ -128,6 +128,16 @@ static SDL_bool MMIYOO_SupportsBlendMode(SDL_Renderer *renderer, SDL_BlendMode b
     if (colorOperation != SDL_BLENDOPERATION_ADD || alphaOperation != SDL_BLENDOPERATION_ADD) {
         return SDL_FALSE;
     }
+
+    /* SDL_BLENDMODE_ADD_PREMULTIPLIED's mismatched color (ONE/ONE) and alpha
+     * (ZERO/ONE) factors would otherwise fail the general matching-factors
+     * check; reporting it as supported is only correct because the blend
+     * translation special-cases this exact factor signature the same way. */
+    if (srcColorFactor == SDL_BLENDFACTOR_ONE && dstColorFactor == SDL_BLENDFACTOR_ONE &&
+        srcAlphaFactor == SDL_BLENDFACTOR_ZERO && dstAlphaFactor == SDL_BLENDFACTOR_ONE) {
+        return SDL_TRUE;
+    }
+
     if (srcColorFactor != srcAlphaFactor || dstColorFactor != dstAlphaFactor) {
         return SDL_FALSE;
     }
@@ -146,6 +156,10 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
         if (data->scale_scratch_vir) {
             MI_SYS_Munmap(data->scale_scratch_vir, data->scale_scratch_alloc_size);
             MI_SYS_MMA_Free(data->scale_scratch_phy);
+        }
+        if (data->fill_scratch_vir) {
+            MI_SYS_Munmap(data->fill_scratch_vir, data->fill_scratch_alloc_size);
+            MI_SYS_MMA_Free(data->fill_scratch_phy);
         }
         SDL_free(data);
     }
@@ -249,10 +263,12 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         }
     }
 
+    /* On by default; set SDL_MMIYOO_GEOMETRY_DIRECT_WRITE=0 to opt out. */
+    data->direct_write_enabled = SDL_TRUE;
     {
         const char *direct_write_hint = SDL_GetHint("SDL_MMIYOO_GEOMETRY_DIRECT_WRITE");
-        if (direct_write_hint && SDL_atoi(direct_write_hint) != 0) {
-            data->direct_write_enabled = SDL_TRUE;
+        if (direct_write_hint && SDL_atoi(direct_write_hint) == 0) {
+            data->direct_write_enabled = SDL_FALSE;
         }
     }
 
@@ -314,6 +330,21 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         MMIYOO_LOG_WARN("SCALEDBG RendererInit: GFX_GetFrameWidth/Height=%dx%d final framebuffer_width/height=%dx%d",
                         (int)GFX_GetFrameWidth(), (int)GFX_GetFrameHeight(),
                         data->framebuffer_width, data->framebuffer_height);
+    }
+
+    if (MI_SYS_MMA_Alloc(NULL, MMIYOO_SYS_ALIGNMENT, &data->fill_scratch_phy) == MI_SUCCESS) {
+        /* Uncached: written fresh before every blit and never read back by
+         * the CPU, so skipping the cache entirely avoids a flush syscall on
+         * every non-opaque fill. */
+        if (MI_SYS_Mmap(data->fill_scratch_phy, MMIYOO_SYS_ALIGNMENT, &data->fill_scratch_vir, FALSE) == MI_SUCCESS) {
+            data->fill_scratch_alloc_size = MMIYOO_SYS_ALIGNMENT;
+        } else {
+            MI_SYS_MMA_Free(data->fill_scratch_phy);
+            data->fill_scratch_phy = 0;
+        }
+    }
+    if (!data->fill_scratch_vir) {
+        MMIYOO_LOG_WARN("MMIYOO_CreateRenderer: fill scratch surface alloc failed -- non-opaque fills will be dropped");
     }
 
     memset(&data->current_target_surface, 0, sizeof(MI_GFX_Surface_t));

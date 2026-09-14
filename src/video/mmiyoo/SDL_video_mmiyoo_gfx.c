@@ -59,6 +59,7 @@
 #include "SDL_video_mmiyoo.h"
 #include "SDL_event_mmiyoo.h"
 #include "SDL_video_mmiyoo_internal.h"
+#include "../../core/mmiyoo/SDL_mmiyoo_pixelformat.h"
 
 /* Framebuffer metrics, system/GFX init+teardown, framebuffer init/uninit,
  * shared MI_GFX copy/blit configuration+execution (used by the renderer and
@@ -435,6 +436,20 @@ MMIYOO_SDLBlendFactorToDfbBldOp(SDL_BlendFactor factor)
     }
 }
 
+/* SDL_BLENDMODE_ADD_PREMULTIPLIED's color factors (ONE, ONE) don't match its
+ * alpha factors (ZERO, ONE), so the general single-factor-pair check other
+ * composed modes use rejects it; this detects it explicitly instead. */
+static SDL_bool
+MMIYOO_IsAddPremultipliedBlendMode(SDL_BlendMode blend_mode)
+{
+    return SDL_GetBlendModeColorOperation(blend_mode) == SDL_BLENDOPERATION_ADD &&
+           SDL_GetBlendModeAlphaOperation(blend_mode) == SDL_BLENDOPERATION_ADD &&
+           SDL_GetBlendModeSrcColorFactor(blend_mode) == SDL_BLENDFACTOR_ONE &&
+           SDL_GetBlendModeDstColorFactor(blend_mode) == SDL_BLENDFACTOR_ONE &&
+           SDL_GetBlendModeSrcAlphaFactor(blend_mode) == SDL_BLENDFACTOR_ZERO &&
+           SDL_GetBlendModeDstAlphaFactor(blend_mode) == SDL_BLENDFACTOR_ONE;
+}
+
 /* SDL_FALSE if blend_mode needs a non-ADD op or mismatched color/alpha factors -- MI_GFX has one factor pair for all 4 channels. */
 static SDL_bool
 MMIYOO_TryComposeBlendMode(SDL_BlendMode blend_mode, MI_GFX_DfbBldOp_e *src_op, MI_GFX_DfbBldOp_e *dst_op)
@@ -458,6 +473,40 @@ MMIYOO_TryComposeBlendMode(SDL_BlendMode blend_mode, MI_GFX_DfbBldOp_e *src_op, 
     return SDL_TRUE;
 }
 
+/* MI_GFX's colorkey match is presumed to compare against the pixel's native
+ * bit layout, not a portable triplet, so a caller's format-agnostic
+ * (r<<16)|(g<<8)|b key is repacked to match fmt here. Not yet confirmed
+ * against real hardware. */
+static MI_U32
+MMIYOO_PackColorKeyValue(Uint32 rgb_key, MI_GFX_ColorFmt_e fmt)
+{
+    Uint8 r = (Uint8)((rgb_key >> 16) & 0xFF);
+    Uint8 g = (Uint8)((rgb_key >> 8) & 0xFF);
+    Uint8 b = (Uint8)(rgb_key & 0xFF);
+
+    switch (fmt) {
+        case E_MI_GFX_FMT_RGB565:
+            return ((MI_U32)(r >> 3) << 11) | ((MI_U32)(g >> 2) << 5) | (MI_U32)(b >> 3);
+        case E_MI_GFX_FMT_BGR565:
+            return ((MI_U32)(b >> 3) << 11) | ((MI_U32)(g >> 2) << 5) | (MI_U32)(r >> 3);
+        case E_MI_GFX_FMT_ARGB1555:
+            return ((MI_U32)(r >> 3) << 10) | ((MI_U32)(g >> 3) << 5) | (MI_U32)(b >> 3);
+        case E_MI_GFX_FMT_ARGB4444:
+            return ((MI_U32)(r >> 4) << 8) | ((MI_U32)(g >> 4) << 4) | (MI_U32)(b >> 4);
+        case E_MI_GFX_FMT_RGBA4444:
+            return ((MI_U32)(r >> 4) << 12) | ((MI_U32)(g >> 4) << 8) | ((MI_U32)(b >> 4) << 4);
+        case E_MI_GFX_FMT_RGBA8888:
+            return ((MI_U32)r << 24) | ((MI_U32)g << 16) | ((MI_U32)b << 8);
+        case E_MI_GFX_FMT_ABGR8888:
+            return ((MI_U32)b << 16) | ((MI_U32)g << 8) | (MI_U32)r;
+        case E_MI_GFX_FMT_BGRA8888:
+            return ((MI_U32)b << 24) | ((MI_U32)g << 16) | ((MI_U32)r << 8);
+        case E_MI_GFX_FMT_ARGB8888:
+        default:
+            return ((MI_U32)r << 16) | ((MI_U32)g << 8) | (MI_U32)b;
+    }
+}
+
 int GFX_Copy(const void *pixels,
              MI_PHY pixels_phy,
              SDL_Rect srcrect,
@@ -475,7 +524,9 @@ int GFX_Copy(const void *pixels,
              Uint8 mod_r,
              Uint8 mod_g,
              Uint8 mod_b,
-             Uint8 mod_a)
+             Uint8 mod_a,
+             SDL_bool colorkey_enabled,
+             Uint32 colorkey_value)
 {
 #ifdef MMIYOO
     MI_U16 u16Fence = 0;
@@ -507,60 +558,11 @@ int GFX_Copy(const void *pixels,
     }
 
     if (!format_supported) {
-        switch(src_format) {
-            case SDL_PIXELFORMAT_RGB565:
-                mi_src_format = E_MI_GFX_FMT_RGB565;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_BGR565:
-                mi_src_format = E_MI_GFX_FMT_BGR565;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ARGB8888:
-                mi_src_format = E_MI_GFX_FMT_ARGB8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_RGBA8888:
-                mi_src_format = E_MI_GFX_FMT_ARGB8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ABGR8888:
-                mi_src_format = E_MI_GFX_FMT_ABGR8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_BGRA8888:
-                mi_src_format = E_MI_GFX_FMT_BGRA8888;
-                src_bytes_per_pixel = 4;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ARGB1555:
-                mi_src_format = E_MI_GFX_FMT_ARGB1555;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_ARGB4444:
-                mi_src_format = E_MI_GFX_FMT_ARGB4444;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            case SDL_PIXELFORMAT_RGBA4444:
-                mi_src_format = E_MI_GFX_FMT_RGBA4444;
-                src_bytes_per_pixel = 2;
-                format_supported = SDL_TRUE;
-                break;
-            default:
-                break;
-        }
-    }
+        int bits_per_pixel;
+        const char *format_name;
 
-    if (!format_supported) {
-        mi_src_format = E_MI_GFX_FMT_ARGB8888;
-        src_bytes_per_pixel = 4;
+        mi_src_format = MMIYOO_SDLToMIGfxFormat(src_format, &bits_per_pixel, &format_name);
+        src_bytes_per_pixel = (Uint32)(bits_per_pixel / 8);
     }
 
     if (!target_surface) {
@@ -588,47 +590,56 @@ int GFX_Copy(const void *pixels,
     gfx.hw.opt.eRotate = rotate;
     gfx.hw.opt.eMirror = mirror;
 
-    /* Disable colorkey operations for predictable blending */
-    gfx.hw.opt.stSrcColorKeyInfo.bEnColorKey = 0;  /* MI_FALSE */
-    gfx.hw.opt.stDstColorKeyInfo.bEnColorKey = 0;  /* MI_FALSE */
+    gfx.hw.opt.stDstColorKeyInfo.bEnColorKey = FALSE;  /* no destination-colorkey entry point yet */
 
     /* Blend-factor mapping follows SigmaStar's DfbBldOp_e/DfbBlendFlags_e
-     * docs, applied to SDL's composed blend modes. */
-    /* Only set ALPHACHANNEL when the source format actually has alpha (RGB565/BGR565 don't). */
+     * docs, applied to SDL's composed blend modes. Blend, color-modulation,
+     * and colorkey flag bits are all accumulated into one local value and
+     * assigned to the struct once, rather than each read-modify-writing
+     * the struct field directly in turn. */
     {
+        /* Only set ALPHACHANNEL when the source format actually has alpha (RGB565/BGR565 don't). */
         const SDL_bool src_has_alpha = (mi_src_format != E_MI_GFX_FMT_RGB565 &&
                                          mi_src_format != E_MI_GFX_FMT_BGR565);
+        MI_U32 flags;
 
         switch (blend_mode) {
             case SDL_BLENDMODE_NONE:
                 gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
                 gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
-                gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+                flags = (MI_U32)E_MI_GFX_DFB_BLEND_NOFX;
                 break;
             case SDL_BLENDMODE_ADD:
                 gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
                 gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
-                gfx.hw.opt.eDFBBlendFlag =
-                    src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                flags = (MI_U32)(src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX);
                 break;
             case SDL_BLENDMODE_MOD:
                 gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ZERO;
                 gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_SRCCOLOR;
-                gfx.hw.opt.eDFBBlendFlag = E_MI_GFX_DFB_BLEND_NOFX;
+                flags = (MI_U32)E_MI_GFX_DFB_BLEND_NOFX;
                 break;
             case SDL_BLENDMODE_MUL:
                 gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_DESTCOLOR;
                 gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-                gfx.hw.opt.eDFBBlendFlag =
-                    src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                flags = (MI_U32)(src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX);
                 break;
             default: {
                 MI_GFX_DfbBldOp_e composed_src_op, composed_dst_op;
-                if (MMIYOO_TryComposeBlendMode(blend_mode, &composed_src_op, &composed_dst_op)) {
+                if (MMIYOO_IsAddPremultipliedBlendMode(blend_mode)) {
+                    /* Gets RGB exactly right (srcRGB+dstRGB), confirmed
+                     * on-device. Alpha does not match SDL's own formula
+                     * (dstA unchanged) since MI_GFX applies this same ONE/ONE
+                     * pair to alpha too -- it comes out as srcA+dstA
+                     * (saturating), not dstA. No fix possible: this hardware
+                     * has one blend-factor pair shared across all 4 channels. */
+                    gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
+                    gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_ONE;
+                    flags = (MI_U32)E_MI_GFX_DFB_BLEND_NOFX;
+                } else if (MMIYOO_TryComposeBlendMode(blend_mode, &composed_src_op, &composed_dst_op)) {
                     gfx.hw.opt.eSrcDfbBldOp = composed_src_op;
                     gfx.hw.opt.eDstDfbBldOp = composed_dst_op;
-                    gfx.hw.opt.eDFBBlendFlag =
-                        src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                    flags = (MI_U32)(src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX);
                 } else {
                     if (blend_mode != SDL_BLENDMODE_BLEND && !g_warned_unsupported_compose) {
                         MMIYOO_LOG_WARN("GFX_Copy: composed blend mode 0x%x not representable on MI_GFX "
@@ -640,26 +651,34 @@ int GFX_Copy(const void *pixels,
                     /* SDL_BLENDMODE_BLEND and any unrepresentable composed modes fall back to standard alpha blending */
                     gfx.hw.opt.eSrcDfbBldOp = E_MI_GFX_DFB_BLD_SRCALPHA;
                     gfx.hw.opt.eDstDfbBldOp = E_MI_GFX_DFB_BLD_INVSRCALPHA;
-                    gfx.hw.opt.eDFBBlendFlag =
-                        src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX;
+                    flags = (MI_U32)(src_has_alpha ? E_MI_GFX_DFB_BLEND_ALPHACHANNEL : E_MI_GFX_DFB_BLEND_NOFX);
                 }
                 break;
             }
         }
-    }
 
-    /* COLORIZE/COLORALPHA tint the source via u32GlobalSrcConstColor (A8:R8:G8:B8); skip entirely when there's nothing to modulate. */
-    if (mod_r != 255 || mod_g != 255 || mod_b != 255 || mod_a != 255) {
-        MI_U32 flags = (MI_U32)gfx.hw.opt.eDFBBlendFlag;
+        /* COLORIZE/COLORALPHA tint the source via u32GlobalSrcConstColor (A8:R8:G8:B8); no-op when there's nothing to modulate. */
         if (mod_r != 255 || mod_g != 255 || mod_b != 255) {
             flags |= (MI_U32)E_MI_GFX_DFB_BLEND_COLORIZE;
         }
         if (mod_a != 255) {
             flags |= (MI_U32)E_MI_GFX_DFB_BLEND_COLORALPHA;
         }
+        if (mod_r != 255 || mod_g != 255 || mod_b != 255 || mod_a != 255) {
+            gfx.hw.opt.u32GlobalSrcConstColor = ((MI_U32)mod_a << 24) | ((MI_U32)mod_r << 16) |
+                                                ((MI_U32)mod_g << 8) | (MI_U32)mod_b;
+        }
+
+        gfx.hw.opt.stSrcColorKeyInfo.bEnColorKey = colorkey_enabled ? TRUE : FALSE;
+        if (colorkey_enabled) {
+            flags |= (MI_U32)E_MI_GFX_DFB_BLEND_SRC_COLORKEY;
+            gfx.hw.opt.stSrcColorKeyInfo.eCKeyOp = E_MI_GFX_RGB_OP_EQUAL;
+            gfx.hw.opt.stSrcColorKeyInfo.eCKeyFmt = mi_src_format;
+            gfx.hw.opt.stSrcColorKeyInfo.stCKeyVal.u32ColorStart = MMIYOO_PackColorKeyValue(colorkey_value, mi_src_format);
+            gfx.hw.opt.stSrcColorKeyInfo.stCKeyVal.u32ColorEnd = gfx.hw.opt.stSrcColorKeyInfo.stCKeyVal.u32ColorStart;
+        }
+
         gfx.hw.opt.eDFBBlendFlag = (MI_Gfx_DfbBlendFlags_e)flags;
-        gfx.hw.opt.u32GlobalSrcConstColor = ((MI_U32)mod_a << 24) | ((MI_U32)mod_r << 16) |
-                                            ((MI_U32)mod_g << 8) | (MI_U32)mod_b;
     }
 
     /* Apply clipping if enabled; incoming clip rect is already in target coordinate space */

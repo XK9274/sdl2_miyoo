@@ -186,6 +186,26 @@ extern DECLSPEC SDL_BlendMode SDLCALL SDL_ComposeCustomBlendMode(SDL_BlendFactor
         SDL_BlendFactor dstAlphaFactor,
         SDL_BlendOperation alphaOperation);
 
+/**
+ *  \brief Blend premultiplied-alpha source pixels over the destination.
+ *
+ *  dstRGB = srcRGB + (dstRGB * (1-srcA))
+ *  dstA   = srcA + (dstA * (1-srcA))
+ */
+#define SDL_BLENDMODE_BLEND_PREMULTIPLIED (SDL_BlendMode) SDL_ComposeCustomBlendMode( \
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD, \
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_BLENDOPERATION_ADD)
+
+/**
+ *  \brief Add premultiplied-alpha source pixels to the destination.
+ *
+ *  dstRGB = srcRGB + dstRGB
+ *  dstA   = dstA
+ */
+#define SDL_BLENDMODE_ADD_PREMULTIPLIED (SDL_BlendMode) SDL_ComposeCustomBlendMode( \
+        SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD, \
+        SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD)
+
 /* Ends C function definitions when using C++ */
 #ifdef __cplusplus
 }
