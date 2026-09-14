@@ -50,6 +50,10 @@ static int MMIYOO_JoystickInit(void)
 
     MMIYOO_InputInit();
 
+    /* The always-present device is never otherwise announced, so
+     * SDL_JOYDEVICEADDED would never fire without this. */
+    SDL_PrivateJoystickAdded(0);
+
     return 1;
 }
 
