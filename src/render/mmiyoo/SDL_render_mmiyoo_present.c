@@ -51,36 +51,99 @@
 int MMIYOO_RenderReadPixels(SDL_Renderer *renderer, const SDL_Rect *rect, Uint32 pixel_format, void *pixels, int pitch)
 {
     MMIYOO_RenderData *data = (MMIYOO_RenderData *)renderer->driverdata;
-    MMIYOO_TextureData *src_texture;
-    void *src_pixels;
 
-    /* Only a render-target texture has a CPU-mapped source of known pixel
-     * format to read back. The default/window target's only CPU-visible
-     * buffer has a runtime pixel format that was never verified on-device,
-     * so it stays unsupported rather than risk silently returning
-     * corrupted pixels. */
-    if (!data->is_target_texture || !data->boundTarget) {
+    if (data->is_target_texture && data->boundTarget) {
+        MMIYOO_TextureData *src_texture = (MMIYOO_TextureData *)data->boundTarget->driverdata;
+        void *src_pixels;
+
+        if (!src_texture || !src_texture->virAddr) {
+            return SDL_Unsupported();
+        }
+        if (rect->x < 0 || rect->y < 0 ||
+            (unsigned int)(rect->x + rect->w) > src_texture->width ||
+            (unsigned int)(rect->y + rect->h) > src_texture->height) {
+            return SDL_SetError("Tried to read outside of texture bounds");
+        }
+
+        /* A prior hardware write (RenderCopy/RenderClear/RenderFillRect
+         * into this target) may still be in flight, and its result may not
+         * yet be visible through this texture's cached CPU mapping even
+         * once it completes -- both must be resolved before this read, or
+         * it can return an earlier frame's content. */
+        if (GFX_HasPendingTextureFences()) {
+            GFX_FlushTextureFences();
+        }
+        MMIYOO_FlushInvCacheRange((Uint8 *)src_texture->virAddr + (size_t)rect->y * src_texture->pitch,
+                                   (size_t)rect->h * src_texture->pitch);
+
+        src_pixels = (Uint8 *)src_texture->virAddr +
+                     rect->y * src_texture->pitch +
+                     rect->x * src_texture->bytes_per_pixel;
+
+        return SDL_ConvertPixels(rect->w, rect->h,
+                                  src_texture->format, src_pixels, src_texture->pitch,
+                                  pixel_format, pixels, pitch);
+    }
+
+    /* Live window/framebuffer target: only the plain ARGB8888 case is
+     * trusted, since this driver's own pixel-format work already verified
+     * that layout on-device (unlike the vendor's RGBA8888, which decodes
+     * with worse corruption than the ARGB8888 R/B-swap workaround already
+     * in use). */
+    if (data->current_target_surface.eColorFmt != E_MI_GFX_FMT_ARGB8888 ||
+        GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
         return SDL_Unsupported();
     }
+    {
+        void *vir = GFX_GetFrameBufferVirtual();
+        Uint32 stride;
+        int fb_w, fb_h;
+        int x, y;
+        Uint8 *tmp;
+        int result;
 
-    src_texture = (MMIYOO_TextureData *)data->boundTarget->driverdata;
-    if (!src_texture || !src_texture->virAddr) {
-        return SDL_Unsupported();
+        if (!vir) {
+            return SDL_Unsupported();
+        }
+
+        stride = data->current_target_surface.u32Stride;
+        fb_w = MMIYOO_GetFramebufferWidth(data);
+        fb_h = MMIYOO_GetFramebufferHeight(data);
+
+        if (rect->x < 0 || rect->y < 0 || rect->x + rect->w > fb_w || rect->y + rect->h > fb_h) {
+            return SDL_SetError("Tried to read outside of window bounds");
+        }
+
+        /* A pending fence from an earlier hardware write in this frame must
+         * be waited on before the CPU read below can see its result. */
+        if (GFX_HasPendingTextureFences()) {
+            GFX_FlushTextureFences();
+        }
+
+        tmp = (Uint8 *)SDL_malloc((size_t)rect->w * 4 * (size_t)rect->h);
+        if (!tmp) {
+            return SDL_OutOfMemory();
+        }
+
+        /* Hardware storage is 180-degrees rotated from logical SDL
+         * coordinates -- reversed per-pixel here, not just repositioned,
+         * since arbitrary content (unlike a solid fill) must preserve
+         * row/column order once un-rotated. */
+        for (y = 0; y < rect->h; y++) {
+            Uint32 *dst_row = (Uint32 *)(tmp + (size_t)y * rect->w * 4);
+            int src_y = fb_h - 1 - (rect->y + y);
+            Uint32 *src_row = (Uint32 *)((Uint8 *)vir + (size_t)src_y * stride);
+            for (x = 0; x < rect->w; x++) {
+                int src_x = fb_w - 1 - (rect->x + x);
+                dst_row[x] = src_row[src_x];
+            }
+        }
+
+        result = SDL_ConvertPixels(rect->w, rect->h, SDL_PIXELFORMAT_ARGB8888, tmp, rect->w * 4,
+                                    pixel_format, pixels, pitch);
+        SDL_free(tmp);
+        return result;
     }
-
-    if (rect->x < 0 || rect->y < 0 ||
-        (unsigned int)(rect->x + rect->w) > src_texture->width ||
-        (unsigned int)(rect->y + rect->h) > src_texture->height) {
-        return SDL_SetError("Tried to read outside of texture bounds");
-    }
-
-    src_pixels = (Uint8 *)src_texture->virAddr +
-                 rect->y * src_texture->pitch +
-                 rect->x * src_texture->bytes_per_pixel;
-
-    return SDL_ConvertPixels(rect->w, rect->h,
-                              src_texture->format, src_pixels, src_texture->pitch,
-                              pixel_format, pixels, pitch);
 }
 
 static SDL_bool
