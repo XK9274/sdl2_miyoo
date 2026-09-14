@@ -545,8 +545,10 @@ MMIYOO_Fill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, SDL_Blen
 }
 
 /* Shared eligibility check + once-per-frame hazard flush for both direct-
- * write paths. Fails closed unless writing the non-texture ARGB8888
- * surface -- render-target textures have no mapped virtual address. */
+ * write paths. Sources the mapped address from the bound render-target
+ * texture's own virAddr/pitch when is_target_texture is set, or the
+ * framebuffer otherwise -- fails closed unless the destination is a mapped
+ * ARGB8888 surface. */
 static SDL_bool
 MMIYOO_DirectWriteBegin(MMIYOO_RenderData *data, void **out_vir, Uint32 *out_stride)
 {
@@ -555,18 +557,31 @@ MMIYOO_DirectWriteBegin(MMIYOO_RenderData *data, void **out_vir, Uint32 *out_str
     if (!data->direct_write_enabled) {
         return SDL_FALSE;
     }
-    if (data->is_target_texture) {
-        return SDL_FALSE;
-    }
     if (data->current_target_surface.eColorFmt != E_MI_GFX_FMT_ARGB8888) {
         return SDL_FALSE;
     }
-    if (GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
-        return SDL_FALSE;
-    }
-    vir = GFX_GetFrameBufferVirtual();
-    if (!vir) {
-        return SDL_FALSE;
+
+    if (data->is_target_texture) {
+        MMIYOO_TextureData *dst_texture_data;
+
+        if (!data->boundTarget) {
+            return SDL_FALSE;
+        }
+        dst_texture_data = (MMIYOO_TextureData *)data->boundTarget->driverdata;
+        if (!dst_texture_data || !dst_texture_data->virAddr || dst_texture_data->bytes_per_pixel != 4) {
+            return SDL_FALSE;
+        }
+        vir = dst_texture_data->virAddr;
+        *out_stride = dst_texture_data->pitch;
+    } else {
+        if (GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
+            return SDL_FALSE;
+        }
+        vir = GFX_GetFrameBufferVirtual();
+        if (!vir) {
+            return SDL_FALSE;
+        }
+        *out_stride = data->current_target_surface.u32Stride;
     }
 
     /* Checked on every call, not latched once per frame -- a hardware fence
@@ -577,7 +592,6 @@ MMIYOO_DirectWriteBegin(MMIYOO_RenderData *data, void **out_vir, Uint32 *out_str
     }
 
     *out_vir = vir;
-    *out_stride = data->current_target_surface.u32Stride;
     return SDL_TRUE;
 }
 
@@ -590,6 +604,19 @@ MMIYOO_DirectWriteMarkDirty(MMIYOO_RenderData *data, const SDL_Rect *written)
         SDL_UnionRect(&data->direct_write_dirty_rect, written, &data->direct_write_dirty_rect);
     }
     data->direct_write_dirty = SDL_TRUE;
+}
+
+/* Framebuffer writes go through the lazy dirty-rect flush before the next
+ * hardware read; a render-target texture has no equivalent per-frame hook,
+ * so its writes are flushed immediately instead. */
+static void
+MMIYOO_DirectWriteFlushWritten(MMIYOO_RenderData *data, void *vir, Uint32 stride, const SDL_Rect *written)
+{
+    if (data->is_target_texture) {
+        MMIYOO_FlushInvCacheRange((Uint8 *)vir + (size_t)written->y * stride, (size_t)written->h * stride);
+    } else {
+        MMIYOO_DirectWriteMarkDirty(data, written);
+    }
 }
 
 /* Makes direct-write CPU fills visible to hardware before a GFX BitBlit
@@ -642,10 +669,15 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
 
     /* Repositions only (no rotation needed for a solid fill) to match
      * QuickFill's 180-degree flip for non-texture targets. */
-    fb_w = MMIYOO_GetFramebufferWidth(data);
-    fb_h = MMIYOO_GetFramebufferHeight(data);
-    dst_x = fb_w - dst->x - dst->w;
-    dst_y = fb_h - dst->y - dst->h;
+    if (data->is_target_texture) {
+        dst_x = dst->x;
+        dst_y = dst->y;
+    } else {
+        fb_w = MMIYOO_GetFramebufferWidth(data);
+        fb_h = MMIYOO_GetFramebufferHeight(data);
+        dst_x = fb_w - dst->x - dst->w;
+        dst_y = fb_h - dst->y - dst->h;
+    }
 
     base = (Uint8 *)vir;
     for (row = 0; row < dst->h; ++row) {
@@ -659,7 +691,7 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
     written.y = dst_y;
     written.w = dst->w;
     written.h = dst->h;
-    MMIYOO_DirectWriteMarkDirty(data, &written);
+    MMIYOO_DirectWriteFlushWritten(data, vir, stride, &written);
 
     return SDL_TRUE;
 }
@@ -687,10 +719,15 @@ MMIYOO_TryDirectBlendFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 c
 
     /* Repositions only (no rotation needed for a solid fill) to match
      * QuickFill's 180-degree flip for non-texture targets. */
-    fb_w = MMIYOO_GetFramebufferWidth(data);
-    fb_h = MMIYOO_GetFramebufferHeight(data);
-    dst_x = fb_w - dst->x - dst->w;
-    dst_y = fb_h - dst->y - dst->h;
+    if (data->is_target_texture) {
+        dst_x = dst->x;
+        dst_y = dst->y;
+    } else {
+        fb_w = MMIYOO_GetFramebufferWidth(data);
+        fb_h = MMIYOO_GetFramebufferHeight(data);
+        dst_x = fb_w - dst->x - dst->w;
+        dst_y = fb_h - dst->y - dst->h;
+    }
 
     blend_solid_n32((Uint8 *)vir + (size_t)dst_y * stride + (size_t)dst_x * 4,
                      color, (Uint32)dst->w, (Uint32)dst->h, stride);
@@ -699,7 +736,149 @@ MMIYOO_TryDirectBlendFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 c
     written.y = dst_y;
     written.w = dst->w;
     written.h = dst->h;
-    MMIYOO_DirectWriteMarkDirty(data, &written);
+    MMIYOO_DirectWriteFlushWritten(data, vir, stride, &written);
+
+    return SDL_TRUE;
+}
+
+/* Below this pixel count, a CPU NEON row-copy beats MI_GFX_BitBlit's fixed
+ * per-dispatch cost with real margin; on-device timing put the plain-copy
+ * crossover at ~60,000-70,000px, so this is set well below the wash point. */
+#define MMIYOO_DIRECT_COPY_MAX_PIXELS 40000
+
+/* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path for small unscaled, unrotated,
+ * opaque, unmodulated texture copies: CPU-copy directly into the mapped
+ * window/back-buffer or render-target texture instead of dispatching a
+ * hardware blit (+fence) for it. Returns SDL_FALSE for anything outside
+ * this narrow shape (scaling, rotation, mirror, blending, color
+ * modulation, colorkey, or a non-ARGB8888 surface). */
+SDL_bool
+MMIYOO_TryDirectCopy(MMIYOO_RenderData *data, MMIYOO_TextureData *src_texture_data,
+                     const void *src_pixels, int src_pitch,
+                     const SDL_Rect *src, const SDL_Rect *dst,
+                     SDL_BlendMode blend_mode,
+                     MI_GFX_Rotate_e extra_rotation, SDL_RendererFlip flip,
+                     Uint8 mod_r, Uint8 mod_g, Uint8 mod_b, Uint8 mod_a)
+{
+    Uint8 *dst_base;
+    Uint32 dst_stride;
+    int dst_x;
+    int dst_y;
+    const Uint8 *src_origin;
+    int row;
+
+    if (!src || !dst || src->w <= 0 || src->h <= 0 || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (src->w != dst->w || src->h != dst->h) {
+        return SDL_FALSE;
+    }
+    if ((Sint64)dst->w * dst->h > MMIYOO_DIRECT_COPY_MAX_PIXELS) {
+        return SDL_FALSE;
+    }
+    if (blend_mode != SDL_BLENDMODE_NONE) {
+        return SDL_FALSE;
+    }
+    if (extra_rotation != E_MI_GFX_ROTATE_0 || flip != SDL_FLIP_NONE) {
+        return SDL_FALSE;
+    }
+    if (mod_r != 255 || mod_g != 255 || mod_b != 255 || mod_a != 255) {
+        return SDL_FALSE;
+    }
+    if (!src_texture_data || !src_pixels || src_pitch <= 0 ||
+        src_texture_data->bytes_per_pixel != 4 ||
+        src_texture_data->mi_format != E_MI_GFX_FMT_ARGB8888) {
+        return SDL_FALSE;
+    }
+    if (src_texture_data->colorkey_enabled) {
+        return SDL_FALSE;
+    }
+    if (data->current_target_surface.eColorFmt != E_MI_GFX_FMT_ARGB8888) {
+        return SDL_FALSE;
+    }
+
+    if (data->is_target_texture) {
+        MMIYOO_TextureData *dst_texture_data;
+
+        if (!data->boundTarget) {
+            return SDL_FALSE;
+        }
+        dst_texture_data = (MMIYOO_TextureData *)data->boundTarget->driverdata;
+        if (!dst_texture_data || !dst_texture_data->virAddr || dst_texture_data->bytes_per_pixel != 4) {
+            return SDL_FALSE;
+        }
+        dst_base = (Uint8 *)dst_texture_data->virAddr;
+        dst_stride = dst_texture_data->pitch;
+        dst_x = dst->x;
+        dst_y = dst->y;
+    } else {
+        void *vir;
+
+        if (!data->direct_write_enabled) {
+            return SDL_FALSE;
+        }
+        if (GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
+            return SDL_FALSE;
+        }
+        vir = GFX_GetFrameBufferVirtual();
+        if (!vir) {
+            return SDL_FALSE;
+        }
+        dst_base = (Uint8 *)vir;
+        dst_stride = data->current_target_surface.u32Stride;
+
+        {
+            int fb_w = MMIYOO_GetFramebufferWidth(data);
+            int fb_h = MMIYOO_GetFramebufferHeight(data);
+            dst_x = fb_w - dst->x - dst->w;
+            dst_y = fb_h - dst->y - dst->h;
+        }
+    }
+
+    /* A hardware fence queued between an earlier GFX blit into this same
+     * surface and this write must be waited on first, or this CPU write can
+     * be clobbered by (or race) that still-in-flight blit. */
+    if (GFX_HasPendingTextureFences()) {
+        GFX_FlushTextureFences();
+    }
+
+    src_origin = (const Uint8 *)src_pixels + (size_t)src->y * src_pitch + (size_t)src->x * 4;
+    MMIYOO_FlushInvCacheRange((void *)src_origin, (size_t)src->h * src_pitch);
+
+    if (data->is_target_texture) {
+        Uint8 *dst_row = dst_base + (size_t)dst_y * dst_stride + (size_t)dst_x * 4;
+        const Uint8 *src_row = src_origin;
+        const size_t row_bytes = (size_t)dst->w * 4;
+
+        for (row = 0; row < dst->h; ++row) {
+            neon_memcpy(dst_row, src_row, row_bytes);
+            dst_row += dst_stride;
+            src_row += src_pitch;
+        }
+
+        MMIYOO_FlushInvCacheRange(dst_base + (size_t)dst_y * dst_stride, (size_t)dst->h * dst_stride);
+    } else {
+        /* Framebuffer draws are physically 180-degree rotated: reverse both
+         * row order and pixel order within each row to match the panel's
+         * orientation. */
+        SDL_Rect written;
+        int col;
+
+        for (row = 0; row < dst->h; ++row) {
+            const Uint32 *sp = (const Uint32 *)(src_origin + (size_t)row * src_pitch);
+            Uint32 *dp = (Uint32 *)(dst_base + (size_t)(dst_y + dst->h - 1 - row) * dst_stride + (size_t)dst_x * 4);
+
+            for (col = 0; col < dst->w; ++col) {
+                dp[dst->w - 1 - col] = sp[col];
+            }
+        }
+
+        written.x = dst_x;
+        written.y = dst_y;
+        written.w = dst->w;
+        written.h = dst->h;
+        MMIYOO_DirectWriteMarkDirty(data, &written);
+    }
 
     return SDL_TRUE;
 }
@@ -757,7 +936,7 @@ MMIYOO_TryDirectLineWrite(MMIYOO_RenderData *data, int x0, int y0, int x1, int y
     written.y = SDL_min(y0, y1);
     written.w = SDL_abs(x1 - x0) + 1;
     written.h = SDL_abs(y1 - y0) + 1;
-    MMIYOO_DirectWriteMarkDirty(data, &written);
+    MMIYOO_DirectWriteFlushWritten(data, vir, stride, &written);
 
     return SDL_TRUE;
 }
