@@ -11,10 +11,8 @@ The Miyoo Mini runs on an SSD202D (Sigmastar/MStar) SoC with proprietary MI
 Changes
 -------
 
-Changes to this source weren't captured in a repo before 01/04/2026. See
-[CHANGELOG.md](../CHANGELOG.md) for a rough overview of what's changed since
-the vanilla branch, or browse the diff between `vanilla` and `new_miyoo`
-directly.
+See [CHANGELOG.md](../CHANGELOG.md) for what's changed since the vanilla
+branch, or browse the diff between `vanilla` and `new_miyoo` directly.
 
 Getting the library
 -------------------
@@ -79,6 +77,7 @@ Runtime environment variables
 | `SDL_MMIYOO_INPUT_MODE` | `joystick` | `keyboard` or `joystick`. Which backend posts SDL events from the shared raw-input reader; live app-switchable. |
 | `SDL_MMIYOO_VSYNC_MODE` | `off` | `off`, `adaptive`, or `strict`. `strict` locks in real `/dev/l` panning double-buffering, read once at `FB_Init`; `off`/`adaptive` are read live every present. |
 | `SDL_MMIYOO_INTEGER_SCALE` | on (`1`) | Set to `0` to disable the NEON integer-scale upscaler for core-content blits and fall back to unscaled-blit-only behavior. |
+| `SDL_MMIYOO_STRETCH` | off | Set non-zero to scale window-to-framebuffer non-uniformly per axis, filling the panel on both axes instead of preserving aspect ratio. |
 | `SDL_MMIYOO_TEXTURE_POOL` | on (`1`) | Set to `0` to disable the bounded MI_SYS MMA texture reuse pool. |
 | `SDL_MMIYOO_TEXTURE_POOL_MAX_BYTES` | `10485760` (10 MiB) | Texture pool size cap in bytes. |
 | `SDL_MMIYOO_GEOMETRY_QUICKPATH` | off | Enable glyph-quad duplicate-blit skip for textured geometry (e.g. font batches). |
@@ -87,39 +86,7 @@ Runtime environment variables
 | `SDL_MMIYOO_GEOMETRY_STATS` | off | Collect and log geometry span stats. |
 | `SDL_MMIYOO_DEBUG` | off | Raise the render-driver log category to debug priority. |
 | `SDL_MMIYOO_DEBUG_VERBOSE` | off | Enable verbose render-driver debug logging (implied by `SDL_MMIYOO_DEBUG`). |
-
-Oversized render-target composite
-----------------------------------
-
-When an app's render-target texture is larger than the physical panel
-(640x480 -- e.g. a game rendering at its own native resolution into an
-offscreen target, then compositing that to the screen each frame),
-`MMIYOO_TryDownscaleCompositeCopy` (`src/render/mmiyoo/SDL_render_mmiyoo.c`)
-tries `MI_GFX_BitBlit`'s own implicit hardware scale first -- one blit does
-the downscale, rotation, and composite together, no CPU/NEON pass and no
-scratch buffer. It falls back to a NEON software downscale
-(`downscale_area_n32`, in `neon-arm-library-miyoo`) only if that hardware
-blit itself fails.
-
-Benchmarked with `dev-tools/downscale-bench-probe`
-([mm-buildbot](https://github.com/XK9274/mm-buildbot)) across a resolution
-matrix above the panel size, 150 frames per resolution/approach, timed from
-issue to `MI_GFX_WaitAllDone` fence completion:
-
-| Source resolution | Hardware scale (avg / min / max) | NEON fallback (avg / min / max) |
-|---|---|---|
-| 800x600   | 3.78 / 3.13 / 6.84 ms | 6.39 / 4.94 / 37.77 ms |
-| 1024x768  | 5.01 / 4.01 / 5.74 ms | 7.14 / 5.90 / 12.38 ms |
-| 1280x720  | 5.98 / 4.66 / 8.59 ms | 7.74 / 6.32 / 26.00 ms |
-| 1440x900  | 6.92 / 5.15 / 8.29 ms | 9.63 / 7.44 / 27.99 ms |
-| 1920x1080 | 8.97 / 4.95 / 10.54 ms | 12.61 / 10.25 / 38.88 ms |
-
-Hardware scale won at every resolution tested (roughly 1.4-1.7x faster than
-NEON), with zero `MI_ERR_GFX_DRV_FAIL_STRETCH` and zero hangs from 800x600
-through 1920x1080 (3x the panel's pixel area) -- no resolution ceiling
-turned up in this range. A plain C fallback (`downscale_area_c32`) was also
-benchmarked and was 9-20x slower than NEON at every size; it's no longer
-used anywhere in this path.
+| `SDL_MMIYOO_DEBUG_LOG` | off | Enable additional scaling and input diagnostic logging. |
 
 Acknowledgements
 ----------------
