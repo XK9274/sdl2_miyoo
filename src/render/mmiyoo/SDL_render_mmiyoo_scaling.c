@@ -35,7 +35,9 @@
 #include "SDL_assert.h"
 #include "SDL_hints.h"
 #include "SDL_log.h"
+#include "SDL_mutex.h"
 #include "SDL_stdinc.h"
+#include "SDL_thread.h"
 #include "../SDL_sysrender.h"
 #include "../../core/mmiyoo/SDL_mmiyoo.h"
 #include "../../video/mmiyoo/SDL_video_mmiyoo.h"
@@ -509,6 +511,246 @@ MMIYOO_TryStretchFillCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     dst->y = 0;
     dst->w = framebuffer_width;
     dst->h = framebuffer_height;
+}
+
+/* Backs MMIYOO_TryBilinearScaleCopy's threading: a persistent background
+ * thread parked on a condvar, splitting each call's destination rows in
+ * half with the caller's own thread taking the other half. Lazily created
+ * so a renderer that never enables the hint never spins up a thread. */
+typedef struct {
+    const void *src;
+    void *dst;
+    uint32_t sw, sh, sp, dp, dw, dh, dy_start, dy_end;
+} MMIYOO_BilinearJob;
+
+typedef struct {
+    SDL_Thread *thread;
+    SDL_mutex *mutex;
+    SDL_cond *cond_start;
+    SDL_cond *cond_done;
+    int generation;
+    int seen_generation;
+    SDL_bool done;
+    SDL_bool shutdown;
+    MMIYOO_BilinearJob job;
+} MMIYOO_BilinearPool;
+
+static int
+MMIYOO_BilinearPoolWorker(void *arg)
+{
+    MMIYOO_BilinearPool *p = (MMIYOO_BilinearPool *)arg;
+    MMIYOO_BilinearJob job;
+
+    SDL_LockMutex(p->mutex);
+    for (;;) {
+        while (p->generation == p->seen_generation && !p->shutdown) {
+            SDL_CondWait(p->cond_start, p->mutex);
+        }
+        if (p->shutdown) break;
+        p->seen_generation = p->generation;
+        job = p->job;
+        SDL_UnlockMutex(p->mutex);
+
+        bilinear_scale_n32_range((void *)job.src, job.dst, job.sw, job.sh, job.sp, job.dp,
+                                  job.dw, job.dh, job.dy_start, job.dy_end);
+
+        SDL_LockMutex(p->mutex);
+        p->done = SDL_TRUE;
+        SDL_CondSignal(p->cond_done);
+    }
+    SDL_UnlockMutex(p->mutex);
+    return 0;
+}
+
+static SDL_bool
+MMIYOO_BilinearPoolEnsure(MMIYOO_RenderData *data)
+{
+    MMIYOO_BilinearPool *p;
+
+    if (data->bilinear_pool) {
+        return SDL_TRUE;
+    }
+
+    p = (MMIYOO_BilinearPool *)SDL_calloc(1, sizeof(*p));
+    if (!p) {
+        return SDL_FALSE;
+    }
+
+    p->mutex = SDL_CreateMutex();
+    p->cond_start = SDL_CreateCond();
+    p->cond_done = SDL_CreateCond();
+    if (!p->mutex || !p->cond_start || !p->cond_done) {
+        if (p->mutex) SDL_DestroyMutex(p->mutex);
+        if (p->cond_start) SDL_DestroyCond(p->cond_start);
+        if (p->cond_done) SDL_DestroyCond(p->cond_done);
+        SDL_free(p);
+        return SDL_FALSE;
+    }
+
+    p->thread = SDL_CreateThread(MMIYOO_BilinearPoolWorker, "mmiyoo_bilinear", p);
+    if (!p->thread) {
+        SDL_DestroyMutex(p->mutex);
+        SDL_DestroyCond(p->cond_start);
+        SDL_DestroyCond(p->cond_done);
+        SDL_free(p);
+        return SDL_FALSE;
+    }
+
+    data->bilinear_pool = p;
+    return SDL_TRUE;
+}
+
+void
+MMIYOO_BilinearPoolShutdown(MMIYOO_RenderData *data)
+{
+    MMIYOO_BilinearPool *p = (MMIYOO_BilinearPool *)data->bilinear_pool;
+
+    if (!p) {
+        return;
+    }
+
+    SDL_LockMutex(p->mutex);
+    p->shutdown = SDL_TRUE;
+    SDL_CondSignal(p->cond_start);
+    SDL_UnlockMutex(p->mutex);
+    SDL_WaitThread(p->thread, NULL);
+    SDL_DestroyMutex(p->mutex);
+    SDL_DestroyCond(p->cond_start);
+    SDL_DestroyCond(p->cond_done);
+    SDL_free(p);
+    data->bilinear_pool = NULL;
+}
+
+/* Runs one bilinear_scale_n32_range call per core: the background worker
+ * takes the bottom half of dh, this thread does the top half itself. */
+static void
+MMIYOO_BilinearScale2Threads(MMIYOO_RenderData *data, const void *src, void *dst,
+                              uint32_t sw, uint32_t sh, uint32_t sp, uint32_t dp,
+                              uint32_t dw, uint32_t dh)
+{
+    MMIYOO_BilinearPool *p = (MMIYOO_BilinearPool *)data->bilinear_pool;
+    uint32_t mid = dh / 2;
+
+    SDL_LockMutex(p->mutex);
+    p->job.src = src;
+    p->job.dst = dst;
+    p->job.sw = sw;
+    p->job.sh = sh;
+    p->job.sp = sp;
+    p->job.dp = dp;
+    p->job.dw = dw;
+    p->job.dh = dh;
+    p->job.dy_start = mid;
+    p->job.dy_end = dh;
+    p->done = SDL_FALSE;
+    p->generation++;
+    SDL_CondSignal(p->cond_start);
+    SDL_UnlockMutex(p->mutex);
+
+    bilinear_scale_n32_range((void *)src, dst, sw, sh, sp, dp, dw, dh, 0, mid);
+
+    SDL_LockMutex(p->mutex);
+    while (!p->done) SDL_CondWait(p->cond_done, p->mutex);
+    SDL_UnlockMutex(p->mutex);
+}
+
+/* dst pixel count above one full panel is unproven -- the on-device
+ * measurement backing this hint only covers up to that size. */
+static SDL_bool
+MMIYOO_BilinearSizeOk(int dst_w, int dst_h, int framebuffer_width, int framebuffer_height)
+{
+    if (dst_w <= 0 || dst_h <= 0 || (unsigned)dst_w > BILINEAR_SCALE_MAX_DW) {
+        return SDL_FALSE;
+    }
+    return ((Sint64)dst_w * (Sint64)dst_h) <= ((Sint64)framebuffer_width * (Sint64)framebuffer_height);
+}
+
+/* Opt-in (SDL_MMIYOO_SCALE_FILTER=bilinear) arbitrary-ratio smoothed scale
+ * into the scale scratch buffer, same contract as MMIYOO_TryIntegerScaleCopy:
+ * prepares a scaled copy and rewrites src/dst/pixels/pitch/src_phy; the
+ * caller's own GFX_Copy still runs afterward. 32bpp only, no integer-ratio
+ * constraint -- arbitrary ratios are the point. */
+SDL_bool
+MMIYOO_TryBilinearScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
+                             MMIYOO_TextureData *src_texture_data,
+                             SDL_Rect *src, SDL_Rect *dst,
+                             SDL_BlendMode blend_mode,
+                             const void **pixels, int *pitch, MI_PHY *src_phy)
+{
+    int framebuffer_width, framebuffer_height;
+    unsigned int dst_stride, required_size, bpp;
+    const Uint8 *src_origin;
+
+    if (!data->bilinear_scale_enabled) {
+        return SDL_FALSE;
+    }
+    if (blend_mode != SDL_BLENDMODE_NONE) {
+        return SDL_FALSE;
+    }
+    if (texture->access != SDL_TEXTUREACCESS_STREAMING) {
+        return SDL_FALSE;
+    }
+    if (src->w <= 0 || src->h <= 0 || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (src->w == dst->w && src->h == dst->h) {
+        return SDL_FALSE;
+    }
+
+    bpp = src_texture_data->bytes_per_pixel;
+    if (bpp != 4) {
+        return SDL_FALSE;
+    }
+
+    framebuffer_width = MMIYOO_GetFramebufferWidth(data);
+    framebuffer_height = MMIYOO_GetFramebufferHeight(data);
+    if (!MMIYOO_BilinearSizeOk(dst->w, dst->h, framebuffer_width, framebuffer_height)) {
+        return SDL_FALSE;
+    }
+
+    dst_stride = (unsigned int)(dst->w * (int)bpp);
+    dst_stride = (dst_stride + 15) & ~15u;
+    required_size = dst_stride * (unsigned int)dst->h;
+    required_size = MMIYOO_ALIGN_SYS(required_size);
+
+    if (!MMIYOO_EnsureScaleScratch(data, required_size)) {
+        return SDL_FALSE;
+    }
+
+    src_origin = (const Uint8 *)*pixels +
+                 (size_t)src->y * (size_t)*pitch +
+                 (size_t)src->x * (size_t)bpp;
+
+    /* A misaligned input would fall back to the library's ~4x-slower scalar
+     * kernel; refuse instead of silently blowing the frame budget. */
+    if ( ((uintptr_t)src_origin & 3) || ((uintptr_t)data->scale_scratch_vir & 3) ||
+         (((uint32_t)*pitch) & 3) || (dst_stride & 3) ) {
+        return SDL_FALSE;
+    }
+
+    if (!MMIYOO_BilinearPoolEnsure(data)) {
+        return SDL_FALSE;
+    }
+
+    MMIYOO_FlushInvCacheRange((void *)src_origin, (size_t)src->h * (size_t)*pitch);
+
+    MMIYOO_BilinearScale2Threads(data, src_origin, data->scale_scratch_vir,
+                                  (uint32_t)src->w, (uint32_t)src->h,
+                                  (uint32_t)*pitch, dst_stride,
+                                  (uint32_t)dst->w, (uint32_t)dst->h);
+
+    MMIYOO_FlushInvCacheRange(data->scale_scratch_vir, required_size);
+
+    src->x = 0;
+    src->y = 0;
+    src->w = dst->w;
+    src->h = dst->h;
+
+    *pixels = data->scale_scratch_vir;
+    *pitch = (int)dst_stride;
+    *src_phy = data->scale_scratch_phy;
+
+    return SDL_TRUE;
 }
 
 #endif /* SDL_VIDEO_RENDER_MMIYOO */

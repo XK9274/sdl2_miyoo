@@ -153,6 +153,7 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
             MI_GFX_WaitAllDone(TRUE, 0);
             data->initialized = SDL_FALSE;
         }
+        MMIYOO_BilinearPoolShutdown(data);
         if (data->scale_scratch_vir) {
             MI_SYS_Munmap(data->scale_scratch_vir, data->scale_scratch_alloc_size);
             MI_SYS_MMA_Free(data->scale_scratch_phy);
@@ -278,6 +279,17 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         const char *integer_scale_hint = SDL_GetHint("SDL_MMIYOO_INTEGER_SCALE");
         if (integer_scale_hint && SDL_atoi(integer_scale_hint) == 0) {
             data->integer_scale_enabled = SDL_FALSE;
+        }
+    }
+
+    /* Off by default (crisp nearest-neighbor stays the default); set
+     * SDL_MMIYOO_SCALE_FILTER=bilinear to opt into a smoothed arbitrary-
+     * ratio scale instead. */
+    data->bilinear_scale_enabled = SDL_FALSE;
+    {
+        const char *scale_filter_hint = SDL_GetHint("SDL_MMIYOO_SCALE_FILTER");
+        if (scale_filter_hint && SDL_strcmp(scale_filter_hint, "bilinear") == 0) {
+            data->bilinear_scale_enabled = SDL_TRUE;
         }
     }
 

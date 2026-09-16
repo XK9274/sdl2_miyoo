@@ -632,6 +632,7 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     MMIYOO_TextureData *src_texture_data;
     MMIYOO_TextureData *dst_texture_data;
     SDL_bool used_integer_scale = SDL_FALSE;
+    SDL_bool used_bilinear_scale = SDL_FALSE;
     SDL_bool used_downscale = SDL_FALSE;
     int pitch = 0;
     MI_PHY src_phy = 0;
@@ -755,8 +756,15 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
             /* Core-content software integer-scale; only applies to the default/window target, see MMIYOO_TryIntegerScaleCopy. */
             used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
                                                               blend_mode, &pixels, &pitch, &src_phy);
+            /* TODO: integer-scale claims any ratio it can letterbox, so
+             * bilinear never runs when integer-scale would only letterbox
+             * but bilinear could fill exactly. Needs a decision on ordering. */
             if (!used_integer_scale) {
-                MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
+                used_bilinear_scale = MMIYOO_TryBilinearScaleCopy(data, texture, src_texture_data, &src, &dst,
+                                                                    blend_mode, &pixels, &pitch, &src_phy);
+                if (!used_bilinear_scale) {
+                    MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
+                }
             }
         }
     }
@@ -772,7 +780,7 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
         }
     }
 
-    if (!used_integer_scale && !used_downscale &&
+    if (!used_integer_scale && !used_bilinear_scale && !used_downscale &&
         MMIYOO_TryDirectCopy(data, src_texture_data, pixels, pitch, &src, &dst,
                              blend_mode, extra_rotation, flip,
                              mod_r, mod_g, mod_b, mod_a)) {
@@ -806,15 +814,15 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
         }
     }
 
-    if (src_texture_data && !used_integer_scale && !used_downscale) {
+    if (src_texture_data && !used_integer_scale && !used_bilinear_scale && !used_downscale) {
         src_phy = src_texture_data->phyAddr;
     }
 
     if (!data->is_target_texture && SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
-        MMIYOO_LOG_WARN("SCALEDBG QueueCopy: fb=%dx%d target_surf=%ux%u int_scale=%d src=(%d,%d,%d,%d) dst=(%d,%d,%d,%d) hw_dst=(%d,%d,%d,%d)",
+        MMIYOO_LOG_WARN("SCALEDBG QueueCopy: fb=%dx%d target_surf=%ux%u int_scale=%d bilinear_scale=%d src=(%d,%d,%d,%d) dst=(%d,%d,%d,%d) hw_dst=(%d,%d,%d,%d)",
                         MMIYOO_GetFramebufferWidth(data), MMIYOO_GetFramebufferHeight(data),
                         (unsigned int)data->current_target_surface.u32Width, (unsigned int)data->current_target_surface.u32Height,
-                        (int)used_integer_scale,
+                        (int)used_integer_scale, (int)used_bilinear_scale,
                         src.x, src.y, src.w, src.h,
                         dst.x, dst.y, dst.w, dst.h,
                         hw_dst.x, hw_dst.y, hw_dst.w, hw_dst.h);

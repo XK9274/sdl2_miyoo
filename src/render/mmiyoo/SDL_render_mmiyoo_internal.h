@@ -158,6 +158,12 @@ typedef struct MMIYOO_RenderData {
     /* Latched after a failed grow attempt so a sustained MMA-exhaustion condition doesn't retry every frame; cleared on the next successful grow. */
     SDL_bool scale_scratch_alloc_failed;
 
+    /* SDL_MMIYOO_SCALE_FILTER=bilinear hint (off by default): opt-in
+     * arbitrary-ratio smoothed scale. bilinear_pool is an opaque pointer to
+     * keep threading types out of this shared header. */
+    SDL_bool bilinear_scale_enabled;
+    void *bilinear_pool;
+
     /* Latched after MMIYOO_TryDownscaleCompositeCopy first hits a degenerate/
      * unsupported case (zero-size texture, non-32bpp format) so it logs once
      * instead of every frame. */
@@ -303,6 +309,12 @@ SDL_bool MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *textur
                                     const void **pixels, int *pitch, MI_PHY *src_phy);
 void MMIYOO_TryStretchFillCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                SDL_Rect *src, SDL_Rect *dst, SDL_BlendMode blend_mode);
+SDL_bool MMIYOO_TryBilinearScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
+                                     MMIYOO_TextureData *src_texture_data,
+                                     SDL_Rect *src, SDL_Rect *dst,
+                                     SDL_BlendMode blend_mode,
+                                     const void **pixels, int *pitch, MI_PHY *src_phy);
+void MMIYOO_BilinearPoolShutdown(MMIYOO_RenderData *data);
 
 /* --- present.c public API (RenderReadPixels/RenderPresent/SetVSync are also wired
  * into the SDL_Renderer vtable by MMIYOO_CreateRenderer) --- */
