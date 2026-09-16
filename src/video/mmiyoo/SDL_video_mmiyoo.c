@@ -222,7 +222,7 @@ static SDL_VideoDevice *MMIYOO_CreateDevice(int devindex)
     gldata->context = EGL_NO_CONTEXT;
     gldata->surface = EGL_NO_SURFACE;
     gldata->config = NULL;
-    gldata->swap_interval = 1;
+    gldata->swap_interval = 0;
 
     device->gl_data = gldata;
 #endif

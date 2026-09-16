@@ -33,11 +33,13 @@
 void *ppFunc = NULL;
 void *pfb_idx = NULL;
 void *pfb_vaddr = NULL;
-static SDL_bool g_gles_wait_for_vsync = SDL_TRUE;
+/* Lets the vendor-driven flip callback, which SDL invokes with no _THIS,
+ * still read the live swap interval. */
+static SDL_GLDriverData *g_gles_active_gl_data = NULL;
 
 static void MMIYOO_GLES_Flip(void)
 {
-    GFX_SwapBuffers(g_gles_wait_for_vsync);
+    GFX_SwapBuffers(g_gles_active_gl_data ? (g_gles_active_gl_data->swap_interval != 0) : SDL_FALSE);
 }
 
 SDL_bool
@@ -57,6 +59,8 @@ MMIYOO_GLES_UpdateBufferSettings(_THIS)
                     "MMIYOO GLES: no mapped framebuffer for eglUpdateBufferSettings");
         return SDL_FALSE;
     }
+
+    g_gles_active_gl_data = gl_data;
 
     /* SwiftShader indexes two virtual addresses with fb_idx % 2. Present-copy
      * mode has one stable buffer, so both entries point at it; page-flip mode
@@ -90,12 +94,18 @@ int glSetSwapInterval(_THIS, int interval)
         return SDL_SetError("MMIYOO: swap interval set without active display");
     }
 
+    if (interval != 0 && interval != 1) {
+        return SDL_SetError("MMIYOO: Only swap intervals of 0 or 1 are supported");
+    }
+
+    /* SwiftShader's software eglSwapInterval has no display to sync against,
+     * so it's a pure value store here -- actual present pacing happens
+     * elsewhere, keyed off gl_data->swap_interval. */
     if (eglSwapInterval(gl_data->display, interval) != EGL_TRUE) {
         return SDL_SetError("MMIYOO: eglSwapInterval failed (0x%04x)", eglGetError());
     }
 
     gl_data->swap_interval = interval;
-    g_gles_wait_for_vsync = (interval != 0) ? SDL_TRUE : SDL_FALSE;
     return 0;
 }
 

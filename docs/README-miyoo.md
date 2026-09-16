@@ -75,7 +75,7 @@ Runtime environment variables
 |----------|---------|-------------|
 | `SDL_MMIYOO_GLES_PRESENT_MODE` | `pbuffer` | GLES present strategy, builds with `--enable-gles` only. `pbuffer`: colour-correct, renders offscreen and hardware-blits to present. `windowsurface`: real EGL window surface via a vendor present extension -- kept for comparison only, has known colour corruption in translucent UI regions. See `docs/MMIYOO_SDL_FEATURE_SUMMARY.md`. |
 | `SDL_MMIYOO_INPUT_MODE` | `joystick` | `keyboard` or `joystick`. Which backend posts SDL events from the shared raw-input reader; live app-switchable. |
-| `SDL_MMIYOO_VSYNC_MODE` | `off` | `off`, `adaptive`, or `strict`. `strict` locks in real `/dev/l` panning double-buffering, read once at `FB_Init`; `off`/`adaptive` are read live every present. |
+| `SDL_MMIYOO_VSYNC_MODE` | `off` | `off`, `adaptive`, or `strict`. `strict` locks in real `/dev/l` panning at `FB_Init`; `off`/`adaptive` are read live. An unrecognized value is warned once and treated as unset. |
 | `SDL_MMIYOO_INTEGER_SCALE` | on (`1`) | Set to `0` to disable the NEON integer-scale upscaler for core-content blits and fall back to unscaled-blit-only behavior. |
 | `SDL_MMIYOO_STRETCH` | off | Set non-zero to scale window-to-framebuffer non-uniformly per axis, filling the panel on both axes instead of preserving aspect ratio. |
 | `SDL_MMIYOO_TEXTURE_POOL` | on (`1`) | Set to `0` to disable the bounded MI_SYS MMA texture reuse pool. |

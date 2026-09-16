@@ -92,22 +92,21 @@ extern SDL_bool MMIYOO_ProbeHardware(void);
 
 /* --- SDL_mmiyoo_display.c: vsync-hint resolution, framebuffer-info probing --- */
 
-/* Present pacing. Unset/anything unrecognized = off. "strict" is read
- * once at FB_Init (locks in the /dev/l panning buffer layout); off/adaptive
- * are read live every present.
- *
- * Default is "off" for now, pending a decision between adaptive/strict. */
+/* Present pacing: "off"/"adaptive"/"strict", unset or unrecognized (warned
+ * once) falls through to the live vsync request rather than forcing off.
+ * "strict" -- real /dev/l panning, unique to this panel -- locks in at FB_Init. */
 #define SDL_HINT_MMIYOO_VSYNC_MODE "SDL_MMIYOO_VSYNC_MODE"
 
 typedef enum {
-    MMIYOO_VSYNC_MODE_OFF, /* default, and any unrecognized/unset value */
+    MMIYOO_VSYNC_MODE_OFF, /* default */
     MMIYOO_VSYNC_MODE_ADAPTIVE,
     MMIYOO_VSYNC_MODE_STRICT   /* real /dev/l panning; FB_Init-time only */
 } MMIYOO_VSyncMode_e;
 
 extern MMIYOO_VSyncMode_e MMIYOO_GetVSyncMode(void);
 
-/* Like MMIYOO_GetVSyncMode(), but honors the live SDL_Renderer vsync request when the hint is unset instead of forcing off (mirrors SDL_HINT_RENDER_VSYNC's own precedence in SDL_render.c). */
+/* Like MMIYOO_GetVSyncMode(), but honors the live SDL_Renderer vsync request
+ * when the hint is unset instead of forcing off. */
 extern MMIYOO_VSyncMode_e MMIYOO_ResolvePresentVSyncMode(SDL_bool renderer_vsync_requested);
 
 extern void MMIYOO_GetDefaultFramebufferInfo(MMIYOO_FramebufferInfo *info);

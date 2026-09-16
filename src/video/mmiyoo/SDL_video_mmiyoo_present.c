@@ -125,33 +125,35 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
 #ifdef MMIYOO
     MI_U32 copy_bytes;
     MI_U32 frame_bytes;
-    /* SDL_MMIYOO_VSYNC_MODE wins if explicitly set; otherwise the standard
-     * SDL renderer vsync request (wait_for_vsync) decides adaptive vs off. */
-    const MMIYOO_VSyncMode_e vsync_mode = MMIYOO_ResolvePresentVSyncMode(wait_for_vsync);
+    /* SDL_MMIYOO_VSYNC_MODE wins if explicitly set; otherwise wait_for_vsync
+     * decides adaptive vs off. If the hint still says STRICT after FB_Init
+     * downgraded it (panel rejected panning), use the downgraded mode. */
+    const MMIYOO_VSyncMode_e live_vsync_mode = MMIYOO_ResolvePresentVSyncMode(wait_for_vsync);
+    const MMIYOO_VSyncMode_e vsync_mode =
+        (live_vsync_mode == MMIYOO_VSYNC_MODE_STRICT && !gfx.page_flip_enabled)
+        ? gfx.effective_vsync_mode : live_vsync_mode;
 
     if (!gfx.double_buffer_enabled || gfx.back.phyAddr == 0 || gfx.fb.phyAddr == 0) {
         return;
     }
 
     if (vsync_mode != MMIYOO_VSYNC_MODE_OFF && gfx.fb_dev > 0 && !gfx.page_flip_enabled) {
-        static SDL_bool vsync_unsupported_warned = SDL_FALSE;
-        static Uint64 last_present_ticks = 0;
         const Uint64 target_interval_ms = 17; /* one frame @ 60Hz */
         const Uint64 now = SDL_GetTicks64();
         const SDL_bool already_late = (vsync_mode == MMIYOO_VSYNC_MODE_ADAPTIVE)
-            && last_present_ticks != 0
-            && (now - last_present_ticks) >= target_interval_ms;
+            && gfx.last_present_ticks != 0
+            && (now - gfx.last_present_ticks) >= target_interval_ms;
 
         if (!already_late) {
             __u32 crtc = 0;
 
-            if (ioctl(gfx.fb_dev, FBIO_WAITFORVSYNC, &crtc) != 0 && !vsync_unsupported_warned) {
+            if (ioctl(gfx.fb_dev, FBIO_WAITFORVSYNC, &crtc) != 0 && !gfx.vsync_unsupported_warned) {
                 MMIYOO_LOG_WARN("GFX_SwapBuffers: FBIO_WAITFORVSYNC not supported, presenting unsynchronized");
-                vsync_unsupported_warned = SDL_TRUE;
+                gfx.vsync_unsupported_warned = SDL_TRUE;
             }
         }
 
-        last_present_ticks = SDL_GetTicks64();
+        gfx.last_present_ticks = SDL_GetTicks64();
     }
 
     if (gfx.page_flip_enabled) {
@@ -167,6 +169,18 @@ void GFX_SwapBuffers(SDL_bool wait_for_vsync)
         gfx.vinfo.yoffset = gfx.page_flip_index ? gfx.vinfo.yres : 0;
         /* /dev/l handles panning in strict-mode vsync: 60fps normally, hard-steps to 30fps under load. Killing /dev/l regains control but introduces flickering. */
         ioctl(gfx.fb_dev, FBIOPAN_DISPLAY, &gfx.vinfo);
+
+        /* FBIOPAN_DISPLAY isn't documented to block until scanout;
+         * confirm via FBIO_WAITFORVSYNC and warn once if unsupported. */
+        if (gfx.fb_dev > 0) {
+            __u32 crtc = 0;
+
+            if (ioctl(gfx.fb_dev, FBIO_WAITFORVSYNC, &crtc) != 0 && !gfx.vsync_unsupported_warned) {
+                MMIYOO_LOG_WARN("GFX_SwapBuffers: page-flip FBIO_WAITFORVSYNC confirmation not "
+                                 "supported, trusting FBIOPAN_DISPLAY to block synchronously");
+                gfx.vsync_unsupported_warned = SDL_TRUE;
+            }
+        }
 
         gfx.back.phyAddr = gfx.fb.phyAddr + (gfx.page_flip_index ? 0 : frame_bytes);
         gfx.back.virAddr = (Uint8 *)gfx.fb.virAddr + (gfx.page_flip_index ? 0 : frame_bytes);

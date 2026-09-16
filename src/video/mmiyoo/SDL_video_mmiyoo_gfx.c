@@ -216,33 +216,42 @@ int FB_Init(void)
     gfx.double_buffer_enabled = SDL_TRUE;
     gfx.page_flip_enabled = SDL_FALSE;
     gfx.page_flip_index = 0;
+    gfx.vsync_unsupported_warned = SDL_FALSE;
+    gfx.last_present_ticks = 0;
 
     gfx.fb_dev = open("/dev/fb0", O_RDWR);
     ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
     ioctl(gfx.fb_dev, FBIOGET_VSCREENINFO, &gfx.vinfo);
     gfx.vinfo.yoffset = 0;
 
-    if (MMIYOO_GetVSyncMode() == MMIYOO_VSYNC_MODE_STRICT) {
-        /* Try real panning double buffering: two pages in one fb0 mapping. */
-        struct fb_var_screeninfo verify;
+    {
+        const MMIYOO_VSyncMode_e requested = MMIYOO_GetVSyncMode();
 
-        gfx.vinfo.yres_virtual = gfx.vinfo.yres * 2;
-        ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
-        ioctl(gfx.fb_dev, FBIOGET_VSCREENINFO, &verify);
+        if (requested == MMIYOO_VSYNC_MODE_STRICT) {
+            /* Try real panning double buffering: two pages in one fb0 mapping. */
+            struct fb_var_screeninfo verify;
 
-        if (verify.yres_virtual >= gfx.vinfo.yres * 2) {
-            gfx.vinfo = verify;
-            ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
-            gfx.page_flip_enabled = SDL_TRUE;
-            MMIYOO_LOG_DEBUG("FB_Init: /dev/l vsync active (panel honours FBIOPAN_DISPLAY)");
+            gfx.vinfo.yres_virtual = gfx.vinfo.yres * 2;
+            ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
+            ioctl(gfx.fb_dev, FBIOGET_VSCREENINFO, &verify);
+
+            if (verify.yres_virtual >= gfx.vinfo.yres * 2) {
+                gfx.vinfo = verify;
+                ioctl(gfx.fb_dev, FBIOGET_FSCREENINFO, &gfx.finfo);
+                gfx.page_flip_enabled = SDL_TRUE;
+                gfx.effective_vsync_mode = MMIYOO_VSYNC_MODE_STRICT;
+                MMIYOO_LOG_DEBUG("FB_Init: /dev/l vsync active (panel honours FBIOPAN_DISPLAY)");
+            } else {
+                gfx.vinfo.yres_virtual = gfx.vinfo.yres;
+                ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
+                gfx.effective_vsync_mode = MMIYOO_VSYNC_MODE_ADAPTIVE;
+                MMIYOO_LOG_WARN("FB_Init: /dev/l vsync requested but panel rejected panning, falling back to present-copy");
+            }
         } else {
             gfx.vinfo.yres_virtual = gfx.vinfo.yres;
             ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
-            MMIYOO_LOG_WARN("FB_Init: /dev/l vsync requested but panel rejected panning, falling back to present-copy");
+            gfx.effective_vsync_mode = requested;
         }
-    } else {
-        gfx.vinfo.yres_virtual = gfx.vinfo.yres;
-        ioctl(gfx.fb_dev, FBIOPUT_VSCREENINFO, &gfx.vinfo);
     }
 
     MMIYOO_UpdateFramebufferMetrics();
@@ -346,6 +355,9 @@ int FB_Uninit(void)
 
     gfx.double_buffer_enabled = SDL_FALSE;
     gfx.page_flip_enabled = SDL_FALSE;
+    gfx.effective_vsync_mode = MMIYOO_VSYNC_MODE_OFF;
+    gfx.vsync_unsupported_warned = SDL_FALSE;
+    gfx.last_present_ticks = 0;
 
     SDL_AtomicLock(&g_mmiyoo_sys_lock);
     if (g_mmiyoo_gfx_refcount > 0) {

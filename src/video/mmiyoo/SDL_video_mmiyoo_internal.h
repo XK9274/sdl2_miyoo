@@ -29,6 +29,8 @@
     #include "mi_gfx.h"
 #endif
 
+#include "../../core/mmiyoo/SDL_mmiyoo.h"
+
 typedef struct _GFX {
     int fb_dev;
 
@@ -55,6 +57,13 @@ typedef struct _GFX {
     /* Present strategy: real FBIOPAN_DISPLAY flip vs the fenced BitBlit copy. */
     SDL_bool page_flip_enabled;
     int page_flip_index;
+
+    /* Vsync mode actually configured at FB_Init -- downgrades STRICT to
+     * ADAPTIVE if the panel rejected panning, so GFX_SwapBuffers doesn't
+     * keep re-deriving a STRICT request the hardware never granted. */
+    MMIYOO_VSyncMode_e effective_vsync_mode;
+    SDL_bool vsync_unsupported_warned;
+    Uint64 last_present_ticks;
 
     /* SDL_TRUE once a GLES windowsurface-mode context has written into
      * gfx.back directly -- its memory byte order is GL's RGBA8888, which

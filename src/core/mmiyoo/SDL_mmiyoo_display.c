@@ -33,26 +33,70 @@
 /* VSync-hint resolution and framebuffer-info probing, used by the video
  * device and (for present-vsync resolution) the renderer. */
 
-MMIYOO_VSyncMode_e
-MMIYOO_GetVSyncMode(void)
+/* Parses a non-empty hint string. *recognized is set false for anything
+ * other than "off"/"adaptive"/"strict"; callers treat that like the hint
+ * being unset rather than an explicit override. */
+static MMIYOO_VSyncMode_e
+MMIYOO_ParseVSyncModeHint(const char *mode, SDL_bool *recognized)
 {
-    const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_MODE);
-    if (mode && SDL_strcmp(mode, "adaptive") == 0) {
+    *recognized = SDL_TRUE;
+    if (SDL_strcmp(mode, "off") == 0) {
+        return MMIYOO_VSYNC_MODE_OFF;
+    }
+    if (SDL_strcmp(mode, "adaptive") == 0) {
         return MMIYOO_VSYNC_MODE_ADAPTIVE;
     }
-    if (mode && SDL_strcmp(mode, "strict") == 0) {
+    if (SDL_strcmp(mode, "strict") == 0) {
         return MMIYOO_VSYNC_MODE_STRICT;
     }
-    /* Default is "off" - see SDL_HINT_MMIYOO_VSYNC_MODE comment in SDL_mmiyoo.h. */
+    *recognized = SDL_FALSE;
     return MMIYOO_VSYNC_MODE_OFF;
 }
 
+static void
+MMIYOO_WarnInvalidVSyncModeOnce(const char *mode)
+{
+    static SDL_bool warned = SDL_FALSE;
+    if (!warned) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO,
+                    "SDL_MMIYOO_VSYNC_MODE=%s is not recognized (expected "
+                    "off/adaptive/strict), treating it as unset", mode);
+        warned = SDL_TRUE;
+    }
+}
+
+MMIYOO_VSyncMode_e
+MMIYOO_GetVSyncMode(void)
+{
+    const char *hint = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_MODE);
+    SDL_bool recognized;
+    MMIYOO_VSyncMode_e parsed;
+
+    if (!hint || !*hint) {
+        return MMIYOO_VSYNC_MODE_OFF;
+    }
+    parsed = MMIYOO_ParseVSyncModeHint(hint, &recognized);
+    if (!recognized) {
+        MMIYOO_WarnInvalidVSyncModeOnce(hint);
+    }
+    return parsed;
+}
+
+/* The hint wins outright when it names a recognized mode; otherwise the
+ * live renderer/GL vsync request decides between adaptive and off. */
 MMIYOO_VSyncMode_e
 MMIYOO_ResolvePresentVSyncMode(SDL_bool renderer_vsync_requested)
 {
-    const char *mode = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_MODE);
-    if (mode && *mode) {
-        return MMIYOO_GetVSyncMode();
+    const char *hint = SDL_GetHint(SDL_HINT_MMIYOO_VSYNC_MODE);
+    SDL_bool recognized;
+    MMIYOO_VSyncMode_e parsed;
+
+    if (hint && *hint) {
+        parsed = MMIYOO_ParseVSyncModeHint(hint, &recognized);
+        if (recognized) {
+            return parsed;
+        }
+        MMIYOO_WarnInvalidVSyncModeOnce(hint);
     }
     return renderer_vsync_requested ? MMIYOO_VSYNC_MODE_ADAPTIVE : MMIYOO_VSYNC_MODE_OFF;
 }
