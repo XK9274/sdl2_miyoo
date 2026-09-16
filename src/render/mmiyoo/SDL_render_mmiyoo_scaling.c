@@ -82,20 +82,25 @@ MMIYOO_FlipToMirror(SDL_RendererFlip flip)
 
 /* Nearest never triggers a software pass; Linear asks for bilinear
  * smoothing; Best prefers the sharper integer-ratio upscale, falling back
- * to bilinear when the ratio isn't exact. */
+ * to bilinear when the ratio isn't exact; IntegerOnly wants the same
+ * sharper upscale but must never fall back to bilinear. */
 void
-MMIYOO_ResolveScaleAllowance(SDL_ScaleMode mode, SDL_bool *allow_integer, SDL_bool *allow_bilinear)
+MMIYOO_ResolveScaleAllowance(MMIYOO_ScaleMode mode, SDL_bool *allow_integer, SDL_bool *allow_bilinear)
 {
     switch (mode) {
-        case SDL_ScaleModeLinear:
+        case MMIYOO_SCALE_MODE_LINEAR:
             *allow_integer = SDL_FALSE;
             *allow_bilinear = SDL_TRUE;
             break;
-        case SDL_ScaleModeBest:
+        case MMIYOO_SCALE_MODE_BEST:
             *allow_integer = SDL_TRUE;
             *allow_bilinear = SDL_TRUE;
             break;
-        case SDL_ScaleModeNearest:
+        case MMIYOO_SCALE_MODE_INTEGER_ONLY:
+            *allow_integer = SDL_TRUE;
+            *allow_bilinear = SDL_FALSE;
+            break;
+        case MMIYOO_SCALE_MODE_NEAREST:
         default:
             *allow_integer = SDL_FALSE;
             *allow_bilinear = SDL_FALSE;
@@ -104,17 +109,33 @@ MMIYOO_ResolveScaleAllowance(SDL_ScaleMode mode, SDL_bool *allow_integer, SDL_bo
 }
 
 /* These hints only ever set new textures' initial mode; an explicit
- * per-texture request always overrides it afterward, at runtime. */
-SDL_ScaleMode
+ * per-texture request always overrides it afterward, at runtime. The
+ * legacy integer-on/bilinear-off default never falls back to bilinear, so
+ * it maps to IntegerOnly rather than Best. */
+MMIYOO_ScaleMode
 MMIYOO_ResolveDefaultScaleMode(SDL_bool integer_scale_hint_enabled, SDL_bool bilinear_hint_enabled)
 {
     if (bilinear_hint_enabled) {
-        return SDL_ScaleModeLinear;
+        return MMIYOO_SCALE_MODE_LINEAR;
     }
     if (integer_scale_hint_enabled) {
-        return SDL_ScaleModeBest;
+        return MMIYOO_SCALE_MODE_INTEGER_ONLY;
     }
-    return SDL_ScaleModeNearest;
+    return MMIYOO_SCALE_MODE_NEAREST;
+}
+
+MMIYOO_ScaleMode
+MMIYOO_ScaleModeFromSDL(SDL_ScaleMode mode)
+{
+    switch (mode) {
+        case SDL_ScaleModeLinear:
+            return MMIYOO_SCALE_MODE_LINEAR;
+        case SDL_ScaleModeBest:
+            return MMIYOO_SCALE_MODE_BEST;
+        case SDL_ScaleModeNearest:
+        default:
+            return MMIYOO_SCALE_MODE_NEAREST;
+    }
 }
 
 /* Core-content integer-scale upscaler: MI_GFX_BitBlit has no interpolation

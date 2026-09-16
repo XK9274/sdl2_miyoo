@@ -51,6 +51,17 @@ extern SDL_bool g_warned_copyex_angle;
         }                                                     \
     } while (0)
 
+/* Nearest/Linear/Best mirror SDL_ScaleMode 1:1 for an explicit request;
+ * IntegerOnly is reachable only from the legacy hint defaults, meaning
+ * integer-ratio upscale if eligible, else hardware nearest -- never the
+ * bilinear fallback that Best allows. */
+typedef enum {
+    MMIYOO_SCALE_MODE_NEAREST = 0,
+    MMIYOO_SCALE_MODE_LINEAR,
+    MMIYOO_SCALE_MODE_BEST,
+    MMIYOO_SCALE_MODE_INTEGER_ONLY
+} MMIYOO_ScaleMode;
+
 typedef struct MMIYOO_TextureData {
     void *data;
     unsigned int size;
@@ -77,7 +88,7 @@ typedef struct MMIYOO_TextureData {
 
     /* Read fresh on every copy, so changing it takes effect on the very
      * next draw call -- no renderer recreation needed. */
-    SDL_ScaleMode effective_scale_mode;
+    MMIYOO_ScaleMode effective_scale_mode;
 } MMIYOO_TextureData;
 
 typedef struct MMIYOO_RenderData {
@@ -158,7 +169,7 @@ typedef struct MMIYOO_RenderData {
      * an explicit per-texture request always overrides it afterward, at
      * runtime. Software NEON upscale exists because MI_GFX_BitBlit has no
      * interpolation control of its own. */
-    SDL_ScaleMode default_scale_mode;
+    MMIYOO_ScaleMode default_scale_mode;
     MI_PHY scale_scratch_phy;
     void *scale_scratch_vir;
     unsigned int scale_scratch_alloc_size;
@@ -327,15 +338,20 @@ SDL_bool MMIYOO_TryBilinearScaleCopy(MMIYOO_RenderData *data, SDL_Texture *textu
 void MMIYOO_BilinearPoolShutdown(MMIYOO_RenderData *data);
 void MMIYOO_DownscalePoolShutdown(MMIYOO_RenderData *data);
 
-/* Maps a requested SDL_ScaleMode onto which NEON mechanisms a copy may use:
- * Nearest = hardware only, no software pass; Linear = bilinear only;
- * Best = integer-ratio upscale first, bilinear as its fallback. */
-void MMIYOO_ResolveScaleAllowance(SDL_ScaleMode mode, SDL_bool *allow_integer, SDL_bool *allow_bilinear);
+/* Maps a requested MMIYOO_ScaleMode onto which NEON mechanisms a copy may
+ * use: Nearest = hardware only, no software pass; Linear = bilinear only;
+ * Best = integer-ratio upscale first, bilinear as its fallback; IntegerOnly
+ * = integer-ratio upscale only, never bilinear. */
+void MMIYOO_ResolveScaleAllowance(MMIYOO_ScaleMode mode, SDL_bool *allow_integer, SDL_bool *allow_bilinear);
 
 /* Translates the legacy SDL_MMIYOO_INTEGER_SCALE (on by default) and
  * SDL_MMIYOO_SCALE_FILTER=bilinear (off by default) hints into a starting
- * SDL_ScaleMode, so existing launch configs keep behaving the same. */
-SDL_ScaleMode MMIYOO_ResolveDefaultScaleMode(SDL_bool integer_scale_hint_enabled, SDL_bool bilinear_hint_enabled);
+ * mode, so existing launch configs keep behaving the same. */
+MMIYOO_ScaleMode MMIYOO_ResolveDefaultScaleMode(SDL_bool integer_scale_hint_enabled, SDL_bool bilinear_hint_enabled);
+
+/* 1:1 translation for an explicit request: a non-Nearest scaleMode set
+ * before texture creation, or any call into MMIYOO_SetTextureScaleMode. */
+MMIYOO_ScaleMode MMIYOO_ScaleModeFromSDL(SDL_ScaleMode mode);
 
 /* --- present.c public API (RenderReadPixels/RenderPresent/SetVSync are also wired
  * into the SDL_Renderer vtable by MMIYOO_CreateRenderer) --- */

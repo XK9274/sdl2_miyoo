@@ -319,7 +319,7 @@ int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
      * non-Nearest request wins here and the renderer default only applies
      * to the common case where nothing else asked for a mode. */
     mmiyoo_texture->effective_scale_mode = (texture->scaleMode != SDL_ScaleModeNearest)
-        ? texture->scaleMode
+        ? MMIYOO_ScaleModeFromSDL(texture->scaleMode)
         : ((MMIYOO_RenderData *)renderer->driverdata)->default_scale_mode;
 
     {
@@ -506,7 +506,7 @@ void MMIYOO_SetTextureScaleMode(SDL_Renderer *renderer, SDL_Texture *texture, SD
     (void)renderer;
 
     if (mmiyoo_texture) {
-        mmiyoo_texture->effective_scale_mode = scaleMode;
+        mmiyoo_texture->effective_scale_mode = MMIYOO_ScaleModeFromSDL(scaleMode);
     }
 }
 

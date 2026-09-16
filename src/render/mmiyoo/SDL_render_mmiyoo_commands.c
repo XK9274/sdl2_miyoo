@@ -614,6 +614,17 @@ MMIYOO_IsWholeOutputCopy(SDL_Renderer *renderer,
            dst->w == window_w && dst->h == window_h;
 }
 
+static const char *
+MMIYOO_ScaleModeName(MMIYOO_ScaleMode mode)
+{
+    switch (mode) {
+        case MMIYOO_SCALE_MODE_LINEAR: return "linear";
+        case MMIYOO_SCALE_MODE_BEST: return "best";
+        case MMIYOO_SCALE_MODE_INTEGER_ONLY: return "integer-only";
+        case MMIYOO_SCALE_MODE_NEAREST: default: return "nearest";
+    }
+}
+
 static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
                  SDL_Texture *texture,
                  const void *pixels,
@@ -634,6 +645,9 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     SDL_bool used_integer_scale = SDL_FALSE;
     SDL_bool used_bilinear_scale = SDL_FALSE;
     SDL_bool used_downscale = SDL_FALSE;
+    SDL_bool allow_integer = SDL_FALSE;
+    SDL_bool allow_bilinear = SDL_FALSE;
+    const char *scale_skip_reason = NULL;
     int pitch = 0;
     MI_PHY src_phy = 0;
     int copy_result;
@@ -753,8 +767,6 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
                 return 0;
             }
         } else if (extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
-            SDL_bool allow_integer, allow_bilinear;
-
             /* Aspect-ratio policy (letterbox vs fill) and filter quality are
              * independent: stretch-fill only changes dst before whichever
              * filter below paints it, it isn't a scale mode of its own. */
@@ -769,7 +781,11 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
                     MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
                 }
             }
+        } else {
+            scale_skip_reason = "rotated-or-flipped";
         }
+    } else if (!data->is_target_texture) {
+        scale_skip_reason = "partial-rect";
     }
 
     // DMA optimization: if both source and target are MI_SYS textures, use hardware blit
@@ -822,10 +838,17 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     }
 
     if (!data->is_target_texture && SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
-        MMIYOO_LOG_WARN("SCALEDBG QueueCopy: fb=%dx%d target_surf=%ux%u int_scale=%d bilinear_scale=%d src=(%d,%d,%d,%d) dst=(%d,%d,%d,%d) hw_dst=(%d,%d,%d,%d)",
+        const char *mechanism = used_integer_scale ? "integer" :
+                                 used_bilinear_scale ? "bilinear" :
+                                 used_downscale ? "downscale-composite" :
+                                 "hardware";
+
+        MMIYOO_LOG_WARN("SCALEDBG QueueCopy: fb=%dx%d target_surf=%ux%u mode=%s allow_int=%d allow_bilinear=%d mechanism=%s%s%s src=(%d,%d,%d,%d) dst=(%d,%d,%d,%d) hw_dst=(%d,%d,%d,%d)",
                         MMIYOO_GetFramebufferWidth(data), MMIYOO_GetFramebufferHeight(data),
                         (unsigned int)data->current_target_surface.u32Width, (unsigned int)data->current_target_surface.u32Height,
-                        (int)used_integer_scale, (int)used_bilinear_scale,
+                        MMIYOO_ScaleModeName(src_texture_data->effective_scale_mode),
+                        (int)allow_integer, (int)allow_bilinear, mechanism,
+                        scale_skip_reason ? " skip_reason=" : "", scale_skip_reason ? scale_skip_reason : "",
                         src.x, src.y, src.w, src.h,
                         dst.x, dst.y, dst.w, dst.h,
                         hw_dst.x, hw_dst.y, hw_dst.w, hw_dst.h);
