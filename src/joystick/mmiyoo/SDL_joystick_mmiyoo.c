@@ -27,6 +27,7 @@
 
 #include "SDL_events.h"
 #include "SDL_gamecontroller.h"
+#include "SDL_hints.h"
 #include "SDL_joystick.h"
 #include "neon.h"
 #include "../../core/mmiyoo/SDL_mmiyoo.h"
