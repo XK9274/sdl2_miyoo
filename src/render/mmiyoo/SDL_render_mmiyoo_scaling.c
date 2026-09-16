@@ -212,6 +212,162 @@ MMIYOO_PickDownscaleFunc(unsigned int bytes_per_pixel)
     return NULL;
 }
 
+/* Backs MMIYOO_TryDownscaleCompositeCopy's threading: a persistent
+ * background thread parked on a condvar, splitting each call's
+ * destination rows in half with the caller's own thread taking the other
+ * half. Lazily created on first use of the NEON fallback. */
+typedef struct {
+    const void *src;
+    void *dst;
+    uint32_t sw, sh, sp, dp, dw, dh, dy_start, dy_end;
+} MMIYOO_DownscaleJob;
+
+typedef struct {
+    SDL_Thread *thread;
+    SDL_mutex *mutex;
+    SDL_cond *cond_start;
+    SDL_cond *cond_done;
+    int generation;
+    int seen_generation;
+    SDL_bool done;
+    SDL_bool shutdown;
+    MMIYOO_DownscaleJob job;
+} MMIYOO_DownscalePool;
+
+static int
+MMIYOO_DownscalePoolWorker(void *arg)
+{
+    MMIYOO_DownscalePool *p = (MMIYOO_DownscalePool *)arg;
+    MMIYOO_DownscaleJob job;
+
+    SDL_LockMutex(p->mutex);
+    for (;;) {
+        while (p->generation == p->seen_generation && !p->shutdown) {
+            SDL_CondWait(p->cond_start, p->mutex);
+        }
+        if (p->shutdown) break;
+        p->seen_generation = p->generation;
+        job = p->job;
+        SDL_UnlockMutex(p->mutex);
+
+        downscale_area_n32_range((void *)job.src, job.dst, job.sw, job.sh, job.sp, job.dp,
+                                  job.dw, job.dh, job.dy_start, job.dy_end);
+
+        SDL_LockMutex(p->mutex);
+        p->done = SDL_TRUE;
+        SDL_CondSignal(p->cond_done);
+    }
+    SDL_UnlockMutex(p->mutex);
+    return 0;
+}
+
+static SDL_bool
+MMIYOO_DownscalePoolEnsure(MMIYOO_RenderData *data)
+{
+    MMIYOO_DownscalePool *p;
+
+    if (data->downscale_pool) {
+        return SDL_TRUE;
+    }
+
+    p = (MMIYOO_DownscalePool *)SDL_calloc(1, sizeof(*p));
+    if (!p) {
+        return SDL_FALSE;
+    }
+
+    p->mutex = SDL_CreateMutex();
+    p->cond_start = SDL_CreateCond();
+    p->cond_done = SDL_CreateCond();
+    if (!p->mutex || !p->cond_start || !p->cond_done) {
+        if (p->mutex) SDL_DestroyMutex(p->mutex);
+        if (p->cond_start) SDL_DestroyCond(p->cond_start);
+        if (p->cond_done) SDL_DestroyCond(p->cond_done);
+        SDL_free(p);
+        return SDL_FALSE;
+    }
+
+    p->thread = SDL_CreateThread(MMIYOO_DownscalePoolWorker, "mmiyoo_downscale", p);
+    if (!p->thread) {
+        SDL_DestroyMutex(p->mutex);
+        SDL_DestroyCond(p->cond_start);
+        SDL_DestroyCond(p->cond_done);
+        SDL_free(p);
+        return SDL_FALSE;
+    }
+
+    data->downscale_pool = p;
+    return SDL_TRUE;
+}
+
+void
+MMIYOO_DownscalePoolShutdown(MMIYOO_RenderData *data)
+{
+    MMIYOO_DownscalePool *p = (MMIYOO_DownscalePool *)data->downscale_pool;
+
+    if (!p) {
+        return;
+    }
+
+    SDL_LockMutex(p->mutex);
+    p->shutdown = SDL_TRUE;
+    SDL_CondSignal(p->cond_start);
+    SDL_UnlockMutex(p->mutex);
+    SDL_WaitThread(p->thread, NULL);
+    SDL_DestroyMutex(p->mutex);
+    SDL_DestroyCond(p->cond_start);
+    SDL_DestroyCond(p->cond_done);
+    SDL_free(p);
+    data->downscale_pool = NULL;
+}
+
+/* Runs one downscale_area_n32_range call per core: the background worker
+ * takes the bottom half of dh, this thread does the top half itself. Only
+ * handles the aligned/in-range case the NEON kernel itself accepts --
+ * falls back to a plain single-threaded call otherwise. */
+static SDL_bool
+MMIYOO_DownscaleTry2Threads(MMIYOO_RenderData *data, const void *src, void *dst,
+                             uint32_t sw, uint32_t sh, uint32_t sp, uint32_t dp,
+                             uint32_t dw, uint32_t dh)
+{
+    MMIYOO_DownscalePool *p;
+    uint32_t mid;
+
+    if ( ((uintptr_t)src & 3) || ((uintptr_t)dst & 3) || (sp & 3) || (dp & 3) ||
+         (dw > DOWNSCALE_AREA_MAX_DW) ) {
+        return SDL_FALSE;
+    }
+    if (!MMIYOO_DownscalePoolEnsure(data)) {
+        return SDL_FALSE;
+    }
+
+    p = (MMIYOO_DownscalePool *)data->downscale_pool;
+    mid = dh / 2;
+
+    SDL_LockMutex(p->mutex);
+    p->job.src = src;
+    p->job.dst = dst;
+    p->job.sw = sw;
+    p->job.sh = sh;
+    p->job.sp = sp;
+    p->job.dp = dp;
+    p->job.dw = dw;
+    p->job.dh = dh;
+    p->job.dy_start = mid;
+    p->job.dy_end = dh;
+    p->done = SDL_FALSE;
+    p->generation++;
+    SDL_CondSignal(p->cond_start);
+    SDL_UnlockMutex(p->mutex);
+
+    downscale_area_n32_range((void *)src, dst, sw, sh, sp, dp, dw, dh, 0, mid);
+
+    SDL_LockMutex(p->mutex);
+    while (!p->done) SDL_CondWait(p->cond_done, p->mutex);
+    SDL_UnlockMutex(p->mutex);
+
+    return SDL_TRUE;
+}
+
 /* Composites an oversized render-target texture to the screen entirely in
  * hardware: MI_GFX_BitBlit scales whenever source and destination rects
  * differ in size, so one blit does the downscale, rotation, and composite
@@ -356,10 +512,15 @@ MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
         MMIYOO_FlushInvCacheRange((void *)src_origin,
                                   (size_t)src->h * (size_t)*pitch);
 
-        downscale_func((void *)src_origin, data->scale_scratch_vir,
-                       (uint32_t)src->w, (uint32_t)src->h,
-                       (uint32_t)*pitch, dst_stride,
-                       (uint32_t)framebuffer_width, (uint32_t)framebuffer_height);
+        if (!MMIYOO_DownscaleTry2Threads(data, src_origin, data->scale_scratch_vir,
+                                          (uint32_t)src->w, (uint32_t)src->h,
+                                          (uint32_t)*pitch, dst_stride,
+                                          (uint32_t)framebuffer_width, (uint32_t)framebuffer_height)) {
+            downscale_func((void *)src_origin, data->scale_scratch_vir,
+                           (uint32_t)src->w, (uint32_t)src->h,
+                           (uint32_t)*pitch, dst_stride,
+                           (uint32_t)framebuffer_width, (uint32_t)framebuffer_height);
+        }
 
         MMIYOO_FlushInvCacheRange(data->scale_scratch_vir, required_size);
     }

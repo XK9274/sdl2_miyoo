@@ -169,6 +169,11 @@ typedef struct MMIYOO_RenderData {
      * instead of every frame. */
     SDL_bool downscale_unsupported_warned;
 
+    /* Lazily created on first use by MMIYOO_TryDownscaleCompositeCopy's NEON
+     * fallback; opaque pointer to keep threading types out of this shared
+     * header. */
+    void *downscale_pool;
+
     /* Set once SDL_RenderSetLogicalSize has been applied for this
      * renderer's oversized window, so MMIYOO_RenderPresent doesn't retry
      * it every frame. */
@@ -315,6 +320,7 @@ SDL_bool MMIYOO_TryBilinearScaleCopy(MMIYOO_RenderData *data, SDL_Texture *textu
                                      SDL_BlendMode blend_mode,
                                      const void **pixels, int *pitch, MI_PHY *src_phy);
 void MMIYOO_BilinearPoolShutdown(MMIYOO_RenderData *data);
+void MMIYOO_DownscalePoolShutdown(MMIYOO_RenderData *data);
 
 /* --- present.c public API (RenderReadPixels/RenderPresent/SetVSync are also wired
  * into the SDL_Renderer vtable by MMIYOO_CreateRenderer) --- */

@@ -154,6 +154,7 @@ static void MMIYOO_DestroyRenderer(SDL_Renderer *renderer)
             data->initialized = SDL_FALSE;
         }
         MMIYOO_BilinearPoolShutdown(data);
+        MMIYOO_DownscalePoolShutdown(data);
         if (data->scale_scratch_vir) {
             MI_SYS_Munmap(data->scale_scratch_vir, data->scale_scratch_alloc_size);
             MI_SYS_MMA_Free(data->scale_scratch_phy);
