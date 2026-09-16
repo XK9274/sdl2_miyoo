@@ -80,6 +80,43 @@ MMIYOO_FlipToMirror(SDL_RendererFlip flip)
     return E_MI_GFX_MIRROR_NONE;
 }
 
+/* Nearest never triggers a software pass; Linear asks for bilinear
+ * smoothing; Best prefers the sharper integer-ratio upscale, falling back
+ * to bilinear when the ratio isn't exact. */
+void
+MMIYOO_ResolveScaleAllowance(SDL_ScaleMode mode, SDL_bool *allow_integer, SDL_bool *allow_bilinear)
+{
+    switch (mode) {
+        case SDL_ScaleModeLinear:
+            *allow_integer = SDL_FALSE;
+            *allow_bilinear = SDL_TRUE;
+            break;
+        case SDL_ScaleModeBest:
+            *allow_integer = SDL_TRUE;
+            *allow_bilinear = SDL_TRUE;
+            break;
+        case SDL_ScaleModeNearest:
+        default:
+            *allow_integer = SDL_FALSE;
+            *allow_bilinear = SDL_FALSE;
+            break;
+    }
+}
+
+/* These hints only ever set new textures' initial mode; an explicit
+ * per-texture request always overrides it afterward, at runtime. */
+SDL_ScaleMode
+MMIYOO_ResolveDefaultScaleMode(SDL_bool integer_scale_hint_enabled, SDL_bool bilinear_hint_enabled)
+{
+    if (bilinear_hint_enabled) {
+        return SDL_ScaleModeLinear;
+    }
+    if (integer_scale_hint_enabled) {
+        return SDL_ScaleModeBest;
+    }
+    return SDL_ScaleModeNearest;
+}
+
 /* Core-content integer-scale upscaler: MI_GFX_BitBlit has no interpolation
  * control, so scaling happens in software via neon-arm-library-miyoo
  * (github.com/XK9274/neon-arm-library-miyoo). */
@@ -547,7 +584,7 @@ SDL_bool
 MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                             MMIYOO_TextureData *src_texture_data,
                             SDL_Rect *src, SDL_Rect *dst,
-                            SDL_BlendMode blend_mode,
+                            SDL_BlendMode blend_mode, SDL_bool allowed,
                             const void **pixels, int *pitch, MI_PHY *src_phy)
 {
     int xmul_raw, ymul_raw, xmul, ymul;
@@ -559,7 +596,7 @@ MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
     SDL_bool neon_safe;
     unsigned int bpp;
 
-    if (!data->integer_scale_enabled) {
+    if (!allowed) {
         return SDL_FALSE;
     }
     if (blend_mode != SDL_BLENDMODE_NONE) {
@@ -826,23 +863,22 @@ MMIYOO_BilinearSizeOk(int dst_w, int dst_h, int framebuffer_width, int framebuff
     return ((Sint64)dst_w * (Sint64)dst_h) <= ((Sint64)framebuffer_width * (Sint64)framebuffer_height);
 }
 
-/* Opt-in (SDL_MMIYOO_SCALE_FILTER=bilinear) arbitrary-ratio smoothed scale
- * into the scale scratch buffer, same contract as MMIYOO_TryIntegerScaleCopy:
- * prepares a scaled copy and rewrites src/dst/pixels/pitch/src_phy; the
- * caller's own GFX_Copy still runs afterward. 32bpp only, no integer-ratio
- * constraint -- arbitrary ratios are the point. */
+/* Arbitrary-ratio smoothed scale into the scale scratch buffer: prepares a
+ * scaled copy and rewrites src/dst/pixels/pitch/src_phy, the caller's own
+ * GFX_Copy still runs afterward. 32bpp only, no integer-ratio constraint --
+ * arbitrary ratios are the point. */
 SDL_bool
 MMIYOO_TryBilinearScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                              MMIYOO_TextureData *src_texture_data,
                              SDL_Rect *src, SDL_Rect *dst,
-                             SDL_BlendMode blend_mode,
+                             SDL_BlendMode blend_mode, SDL_bool allowed,
                              const void **pixels, int *pitch, MI_PHY *src_phy)
 {
     int framebuffer_width, framebuffer_height;
     unsigned int dst_stride, required_size, bpp;
     const Uint8 *src_origin;
 
-    if (!data->bilinear_scale_enabled) {
+    if (!allowed) {
         return SDL_FALSE;
     }
     if (blend_mode != SDL_BLENDMODE_NONE) {

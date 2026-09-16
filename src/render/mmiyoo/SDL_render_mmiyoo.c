@@ -274,24 +274,19 @@ SDL_Renderer *MMIYOO_CreateRenderer(SDL_Window *window, Uint32 flags)
         }
     }
 
-    /* On by default; set SDL_MMIYOO_INTEGER_SCALE=0 to fall back to unscaled-blit-only behavior. */
-    data->integer_scale_enabled = SDL_TRUE;
     {
+        SDL_bool integer_scale_hint_enabled = SDL_TRUE;
+        SDL_bool bilinear_hint_enabled = SDL_FALSE;
         const char *integer_scale_hint = SDL_GetHint("SDL_MMIYOO_INTEGER_SCALE");
-        if (integer_scale_hint && SDL_atoi(integer_scale_hint) == 0) {
-            data->integer_scale_enabled = SDL_FALSE;
-        }
-    }
-
-    /* Off by default (crisp nearest-neighbor stays the default); set
-     * SDL_MMIYOO_SCALE_FILTER=bilinear to opt into a smoothed arbitrary-
-     * ratio scale instead. */
-    data->bilinear_scale_enabled = SDL_FALSE;
-    {
         const char *scale_filter_hint = SDL_GetHint("SDL_MMIYOO_SCALE_FILTER");
-        if (scale_filter_hint && SDL_strcmp(scale_filter_hint, "bilinear") == 0) {
-            data->bilinear_scale_enabled = SDL_TRUE;
+
+        if (integer_scale_hint && SDL_atoi(integer_scale_hint) == 0) {
+            integer_scale_hint_enabled = SDL_FALSE;
         }
+        if (scale_filter_hint && SDL_strcmp(scale_filter_hint, "bilinear") == 0) {
+            bilinear_hint_enabled = SDL_TRUE;
+        }
+        data->default_scale_mode = MMIYOO_ResolveDefaultScaleMode(integer_scale_hint_enabled, bilinear_hint_enabled);
     }
 
     /* Off by default (letterbox, unchanged behavior); set

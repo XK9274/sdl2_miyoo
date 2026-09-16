@@ -753,15 +753,18 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
                 return 0;
             }
         } else if (extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
-            /* Core-content software integer-scale; only applies to the default/window target, see MMIYOO_TryIntegerScaleCopy. */
+            SDL_bool allow_integer, allow_bilinear;
+
+            /* Aspect-ratio policy (letterbox vs fill) and filter quality are
+             * independent: stretch-fill only changes dst before whichever
+             * filter below paints it, it isn't a scale mode of its own. */
+            MMIYOO_ResolveScaleAllowance(src_texture_data->effective_scale_mode, &allow_integer, &allow_bilinear);
+
             used_integer_scale = MMIYOO_TryIntegerScaleCopy(data, texture, src_texture_data, &src, &dst,
-                                                              blend_mode, &pixels, &pitch, &src_phy);
-            /* TODO: integer-scale claims any ratio it can letterbox, so
-             * bilinear never runs when integer-scale would only letterbox
-             * but bilinear could fill exactly. Needs a decision on ordering. */
+                                                              blend_mode, allow_integer, &pixels, &pitch, &src_phy);
             if (!used_integer_scale) {
                 used_bilinear_scale = MMIYOO_TryBilinearScaleCopy(data, texture, src_texture_data, &src, &dst,
-                                                                    blend_mode, &pixels, &pitch, &src_phy);
+                                                                    blend_mode, allow_bilinear, &pixels, &pitch, &src_phy);
                 if (!used_bilinear_scale) {
                     MMIYOO_TryStretchFillCopy(data, texture, &src, &dst, blend_mode);
                 }

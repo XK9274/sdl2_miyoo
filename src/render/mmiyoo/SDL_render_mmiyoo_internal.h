@@ -74,6 +74,10 @@ typedef struct MMIYOO_TextureData {
     /* colorkey_value is a format-agnostic (r<<16)|(g<<8)|b triplet. */
     SDL_bool colorkey_enabled;
     Uint32 colorkey_value;
+
+    /* Read fresh on every copy, so changing it takes effect on the very
+     * next draw call -- no renderer recreation needed. */
+    SDL_ScaleMode effective_scale_mode;
 } MMIYOO_TextureData;
 
 typedef struct MMIYOO_RenderData {
@@ -150,18 +154,19 @@ typedef struct MMIYOO_RenderData {
      * default -- trades a little text crispness for fewer hardware blits. */
     SDL_bool geometry_quickpath_enabled;
 
-    /* SDL_MMIYOO_INTEGER_SCALE hint (on by default): software NEON upscale before an unscaled hardware present, since MI_GFX_BitBlit has no interpolation control. */
-    SDL_bool integer_scale_enabled;
+    /* Legacy-hint-derived starting scale mode for newly created textures;
+     * an explicit per-texture request always overrides it afterward, at
+     * runtime. Software NEON upscale exists because MI_GFX_BitBlit has no
+     * interpolation control of its own. */
+    SDL_ScaleMode default_scale_mode;
     MI_PHY scale_scratch_phy;
     void *scale_scratch_vir;
     unsigned int scale_scratch_alloc_size;
     /* Latched after a failed grow attempt so a sustained MMA-exhaustion condition doesn't retry every frame; cleared on the next successful grow. */
     SDL_bool scale_scratch_alloc_failed;
 
-    /* SDL_MMIYOO_SCALE_FILTER=bilinear hint (off by default): opt-in
-     * arbitrary-ratio smoothed scale. bilinear_pool is an opaque pointer to
-     * keep threading types out of this shared header. */
-    SDL_bool bilinear_scale_enabled;
+    /* Opaque pointer to keep threading types out of this shared header;
+     * lazily created on first use by MMIYOO_TryBilinearScaleCopy. */
     void *bilinear_pool;
 
     /* Latched after MMIYOO_TryDownscaleCompositeCopy first hits a degenerate/
@@ -310,17 +315,27 @@ SDL_bool MMIYOO_TryDownscaleCompositeCopy(MMIYOO_RenderData *data, SDL_Texture *
 SDL_bool MMIYOO_TryIntegerScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                     MMIYOO_TextureData *src_texture_data,
                                     SDL_Rect *src, SDL_Rect *dst,
-                                    SDL_BlendMode blend_mode,
+                                    SDL_BlendMode blend_mode, SDL_bool allowed,
                                     const void **pixels, int *pitch, MI_PHY *src_phy);
 void MMIYOO_TryStretchFillCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                SDL_Rect *src, SDL_Rect *dst, SDL_BlendMode blend_mode);
 SDL_bool MMIYOO_TryBilinearScaleCopy(MMIYOO_RenderData *data, SDL_Texture *texture,
                                      MMIYOO_TextureData *src_texture_data,
                                      SDL_Rect *src, SDL_Rect *dst,
-                                     SDL_BlendMode blend_mode,
+                                     SDL_BlendMode blend_mode, SDL_bool allowed,
                                      const void **pixels, int *pitch, MI_PHY *src_phy);
 void MMIYOO_BilinearPoolShutdown(MMIYOO_RenderData *data);
 void MMIYOO_DownscalePoolShutdown(MMIYOO_RenderData *data);
+
+/* Maps a requested SDL_ScaleMode onto which NEON mechanisms a copy may use:
+ * Nearest = hardware only, no software pass; Linear = bilinear only;
+ * Best = integer-ratio upscale first, bilinear as its fallback. */
+void MMIYOO_ResolveScaleAllowance(SDL_ScaleMode mode, SDL_bool *allow_integer, SDL_bool *allow_bilinear);
+
+/* Translates the legacy SDL_MMIYOO_INTEGER_SCALE (on by default) and
+ * SDL_MMIYOO_SCALE_FILTER=bilinear (off by default) hints into a starting
+ * SDL_ScaleMode, so existing launch configs keep behaving the same. */
+SDL_ScaleMode MMIYOO_ResolveDefaultScaleMode(SDL_bool integer_scale_hint_enabled, SDL_bool bilinear_hint_enabled);
 
 /* --- present.c public API (RenderReadPixels/RenderPresent/SetVSync are also wired
  * into the SDL_Renderer vtable by MMIYOO_CreateRenderer) --- */

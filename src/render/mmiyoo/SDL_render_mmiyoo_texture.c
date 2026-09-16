@@ -314,6 +314,14 @@ int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     mmiyoo_texture->height = texture->h;
     mmiyoo_texture->format = texture->format;
 
+    /* SDL's own per-texture default is always Nearest unless the app set
+     * SDL_HINT_RENDER_SCALE_QUALITY before creating it, so an explicit
+     * non-Nearest request wins here and the renderer default only applies
+     * to the common case where nothing else asked for a mode. */
+    mmiyoo_texture->effective_scale_mode = (texture->scaleMode != SDL_ScaleModeNearest)
+        ? texture->scaleMode
+        : ((MMIYOO_RenderData *)renderer->driverdata)->default_scale_mode;
+
     {
         int bits_temp;
         mi_format = MMIYOO_SDLToMIGfxFormat(texture->format, &bits_temp, &format_name);
@@ -493,6 +501,13 @@ void MMIYOO_UnlockTexture(SDL_Renderer *renderer, SDL_Texture *texture)
 
 void MMIYOO_SetTextureScaleMode(SDL_Renderer *renderer, SDL_Texture *texture, SDL_ScaleMode scaleMode)
 {
+    MMIYOO_TextureData *mmiyoo_texture = (MMIYOO_TextureData *)texture->driverdata;
+
+    (void)renderer;
+
+    if (mmiyoo_texture) {
+        mmiyoo_texture->effective_scale_mode = scaleMode;
+    }
 }
 
 SDL_bool
