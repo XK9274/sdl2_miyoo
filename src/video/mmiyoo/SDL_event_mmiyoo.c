@@ -80,34 +80,6 @@ void MMIYOO_PumpEvents(_THIS)
         return;
     }
 
-    /* SELECT held as a modifier: X synthesizes the SDLK_v vsync-toggle hotkey; SELECT/X are masked out of keypad_bitmaps below so the plain tap still fires on release if unused. */
-    {
-        static uint32_t select_was_held = 0;
-        static uint32_t select_combo_used = 0;
-        const uint32_t select_bit = keypad_bitmaps & (1u << MYKEY_SELECT);
-
-        if (select_bit && !select_was_held) {
-            select_combo_used = 0;
-        }
-
-        if (select_bit) {
-            if (!select_combo_used && (keypad_bitmaps & (1u << MYKEY_X))) {
-                select_combo_used = 1;
-                SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_v));
-                SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_v));
-            }
-        } else if (select_was_held && !select_combo_used) {
-            SDL_SendKeyboardKey(SDL_PRESSED, SDL_GetScancodeFromKey(SDLK_RCTRL));
-            SDL_SendKeyboardKey(SDL_RELEASED, SDL_GetScancodeFromKey(SDLK_RCTRL));
-        }
-
-        select_was_held = select_bit;
-
-        if (select_bit) {
-            keypad_bitmaps &= ~((1u << MYKEY_SELECT) | (1u << MYKEY_X));
-        }
-    }
-
     if (pre_keypad_bitmaps != keypad_bitmaps) {
         int cc = 0;
         uint32_t v0 = pre_keypad_bitmaps;
