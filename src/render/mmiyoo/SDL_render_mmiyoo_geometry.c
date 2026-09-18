@@ -515,17 +515,15 @@ MMIYOO_FillViaBlit(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 color, S
 }
 
 /* Below this pixel count, a CPU NEON blend beats MI_GFX_BitBlit's fixed
- * per-dispatch cost with real margin; on-device timing put the crossover
- * at ~5,000px with no margin there, so this is set well below it rather
- * than at the wash point itself. */
-#define MMIYOO_DIRECT_BLEND_FILL_MAX_PIXELS 2000
+ * per-dispatch cost with real margin. Clock-pinned on-device timing showed
+ * NEON still ahead ~1.4-1.5x up to 76,800px, with the wash point somewhere
+ * between there and a full-panel fill (307,200px). */
+#define MMIYOO_DIRECT_BLEND_FILL_MAX_PIXELS 60000
 
-/* Same reasoning as MMIYOO_DIRECT_BLEND_FILL_MAX_PIXELS, measured
- * separately for the additive kernel: on-device timing showed NEON still
- * ahead by ~1.5x even at 40,000px, with the wash point out past 300,000px
- * (a full-panel fill), so this threshold carries far more real margin than
- * the blend one already does. */
-#define MMIYOO_DIRECT_ADD_FILL_MAX_PIXELS 2000
+/* On-device timing for the additive kernel showed NEON still ahead ~1.5x at
+ * 40,000px, with the wash point out past 300,000px (a full-panel fill) --
+ * this keeps real margin below that wash point. */
+#define MMIYOO_DIRECT_ADD_FILL_MAX_PIXELS 120000
 
 /* Solid-color rect fill. Opaque fills under NONE or ordinary BLEND are
  * overwrite-equivalent and use the cheap CPU direct-write/QuickFill paths;
@@ -799,9 +797,9 @@ MMIYOO_TryDirectAddFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
 }
 
 /* Below this pixel count, a CPU NEON row-copy beats MI_GFX_BitBlit's fixed
- * per-dispatch cost with real margin; on-device timing put the plain-copy
- * crossover at ~60,000-70,000px, so this is set well below the wash point. */
-#define MMIYOO_DIRECT_COPY_MAX_PIXELS 40000
+ * per-dispatch cost with real margin. Clock-pinned on-device timing puts the
+ * crossover at ~100,000-150,000px. */
+#define MMIYOO_DIRECT_COPY_MAX_PIXELS 80000
 
 /* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path for small unscaled, unrotated,
  * opaque, unmodulated texture copies: CPU-copy directly into the mapped
