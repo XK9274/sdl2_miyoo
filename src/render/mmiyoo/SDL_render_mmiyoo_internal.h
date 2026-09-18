@@ -284,6 +284,12 @@ SDL_bool MMIYOO_TryDirectCopy(MMIYOO_RenderData *data, MMIYOO_TextureData *src_t
                               SDL_BlendMode blend_mode,
                               MI_GFX_Rotate_e extra_rotation, SDL_RendererFlip flip,
                               Uint8 mod_r, Uint8 mod_g, Uint8 mod_b, Uint8 mod_a);
+SDL_bool MMIYOO_TryDirectRotateCopy(MMIYOO_RenderData *data, MMIYOO_TextureData *src_texture_data,
+                              const void *src_pixels, int src_pitch,
+                              const SDL_Rect *src, const SDL_Rect *dst,
+                              SDL_BlendMode blend_mode,
+                              MI_GFX_Rotate_e extra_rotation, SDL_RendererFlip flip,
+                              Uint8 mod_r, Uint8 mod_g, Uint8 mod_b, Uint8 mod_a);
 
 /* --- commands.c public API (also wired directly into the SDL_Renderer vtable by
  * MMIYOO_CreateRenderer in the top-level file) --- */

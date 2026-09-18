@@ -943,6 +943,149 @@ MMIYOO_TryDirectCopy(MMIYOO_RenderData *data, MMIYOO_TextureData *src_texture_da
     return SDL_TRUE;
 }
 
+/* Below this pixel count a CPU NEON rotate beats a properly fenced
+ * MI_GFX_BitBlit rotate; above it MI_GFX wins. Margin below the measured
+ * 160x160 (25,600px) crossover. */
+#define MMIYOO_DIRECT_ROTATE_MAX_PIXELS 25600
+
+/* SDL_MMIYOO_GEOMETRY_DIRECT_WRITE fast path for small 90/270-degree
+ * rotated, unscaled, unflipped, opaque, unmodulated texture copies:
+ * CPU-rotate directly into the mapped window/back-buffer or render-target
+ * texture instead of dispatching a hardware blit (+fence) for it. Returns
+ * SDL_FALSE for anything outside this narrow shape. */
+SDL_bool
+MMIYOO_TryDirectRotateCopy(MMIYOO_RenderData *data, MMIYOO_TextureData *src_texture_data,
+                           const void *src_pixels, int src_pitch,
+                           const SDL_Rect *src, const SDL_Rect *dst,
+                           SDL_BlendMode blend_mode,
+                           MI_GFX_Rotate_e extra_rotation, SDL_RendererFlip flip,
+                           Uint8 mod_r, Uint8 mod_g, Uint8 mod_b, Uint8 mod_a)
+{
+    Uint8 *dst_base;
+    Uint32 dst_stride;
+    int dst_x;
+    int dst_y;
+    const Uint8 *src_origin;
+    MI_GFX_Rotate_e base_rotation;
+    MI_GFX_Rotate_e effective_rotation;
+
+    if (extra_rotation != E_MI_GFX_ROTATE_90 && extra_rotation != E_MI_GFX_ROTATE_270) {
+        return SDL_FALSE;
+    }
+    if (!src || !dst || src->w <= 0 || src->h <= 0 || dst->w <= 0 || dst->h <= 0) {
+        return SDL_FALSE;
+    }
+    if (src->w != dst->h || src->h != dst->w) {
+        return SDL_FALSE;
+    }
+    if ((Sint64)dst->w * dst->h > MMIYOO_DIRECT_ROTATE_MAX_PIXELS) {
+        return SDL_FALSE;
+    }
+    if (blend_mode != SDL_BLENDMODE_NONE || flip != SDL_FLIP_NONE) {
+        return SDL_FALSE;
+    }
+    if (mod_r != 255 || mod_g != 255 || mod_b != 255 || mod_a != 255) {
+        return SDL_FALSE;
+    }
+    if (!src_texture_data || !src_pixels || src_pitch <= 0 ||
+        src_texture_data->bytes_per_pixel != 4 ||
+        src_texture_data->mi_format != E_MI_GFX_FMT_ARGB8888) {
+        return SDL_FALSE;
+    }
+    if (src_texture_data->colorkey_enabled) {
+        return SDL_FALSE;
+    }
+    if (data->current_target_surface.eColorFmt != E_MI_GFX_FMT_ARGB8888) {
+        return SDL_FALSE;
+    }
+
+    base_rotation = data->is_target_texture ? E_MI_GFX_ROTATE_0 : E_MI_GFX_ROTATE_180;
+    effective_rotation = MMIYOO_AddRotations(base_rotation, extra_rotation);
+
+    if (data->is_target_texture) {
+        MMIYOO_TextureData *dst_texture_data;
+
+        if (!data->boundTarget) {
+            return SDL_FALSE;
+        }
+        dst_texture_data = (MMIYOO_TextureData *)data->boundTarget->driverdata;
+        if (!dst_texture_data || !dst_texture_data->virAddr || dst_texture_data->bytes_per_pixel != 4) {
+            return SDL_FALSE;
+        }
+        dst_base = (Uint8 *)dst_texture_data->virAddr;
+        dst_stride = dst_texture_data->pitch;
+        dst_x = dst->x;
+        dst_y = dst->y;
+    } else {
+        void *vir;
+
+        if (!data->direct_write_enabled) {
+            return SDL_FALSE;
+        }
+        if (GFX_GetFrameBuffer() != data->current_target_surface.phyAddr) {
+            return SDL_FALSE;
+        }
+        vir = GFX_GetFrameBufferVirtual();
+        if (!vir) {
+            return SDL_FALSE;
+        }
+        dst_base = (Uint8 *)vir;
+        dst_stride = data->current_target_surface.u32Stride;
+
+        {
+            int fb_w = MMIYOO_GetFramebufferWidth(data);
+            int fb_h = MMIYOO_GetFramebufferHeight(data);
+            dst_x = fb_w - dst->x - dst->w;
+            dst_y = fb_h - dst->y - dst->h;
+        }
+    }
+
+    if (GFX_HasPendingTextureFences()) {
+        GFX_FlushTextureFences();
+    }
+
+    src_origin = (const Uint8 *)src_pixels + (size_t)src->y * src_pitch + (size_t)src->x * 4;
+    if (src_texture_data->gpu_dirty) {
+        MMIYOO_FlushInvCacheRange((void *)src_origin, (size_t)src->h * src_pitch);
+        src_texture_data->gpu_dirty = SDL_FALSE;
+    }
+
+    {
+        Uint8 *dst_write = dst_base + (size_t)dst_y * dst_stride + (size_t)dst_x * 4;
+
+        if (effective_rotation == E_MI_GFX_ROTATE_90) {
+            rotate90_n32((void *)src_origin, dst_write, (uint32_t)src->w, (uint32_t)src->h,
+                         (uint32_t)src_pitch, dst_stride);
+        } else {
+            rotate270_n32((void *)src_origin, dst_write, (uint32_t)src->w, (uint32_t)src->h,
+                          (uint32_t)src_pitch, dst_stride);
+        }
+    }
+
+    if (data->is_target_texture) {
+        MMIYOO_FlushInvCacheRange(dst_base + (size_t)dst_y * dst_stride, (size_t)dst->h * dst_stride);
+    } else {
+        SDL_Rect written;
+
+        written.x = dst_x;
+        written.y = dst_y;
+        written.w = dst->w;
+        written.h = dst->h;
+        MMIYOO_DirectWriteMarkDirty(data, &written);
+    }
+
+    if (SDL_GetHintBoolean("SDL_MMIYOO_DEBUG_LOG", SDL_FALSE)) {
+        MMIYOO_LOG_WARN("ROTATEDBG DirectRotateCopy: target=%s extra_rotation=%d effective_rotation=%d src=(%d,%d,%d,%d) dst=(%d,%d,%d,%d) dst_write=(%d,%d)",
+                        data->is_target_texture ? "texture" : "framebuffer",
+                        (int)extra_rotation, (int)effective_rotation,
+                        src->x, src->y, src->w, src->h,
+                        dst->x, dst->y, dst->w, dst->h,
+                        dst_x, dst_y);
+    }
+
+    return SDL_TRUE;
+}
+
 /* Bresenham line plot (1px, solid -- matches MI_GFX_DrawLine's non-
  * gradient output) using the same flipped/clamped hardware-space
  * coordinates already computed for the QuickFill path. */

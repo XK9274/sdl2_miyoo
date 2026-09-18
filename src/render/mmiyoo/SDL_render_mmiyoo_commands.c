@@ -804,9 +804,13 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     }
 
     if (!used_integer_scale && !used_bilinear_scale && !used_downscale &&
-        MMIYOO_TryDirectCopy(data, src_texture_data, pixels, pitch, &src, &dst,
-                             blend_mode, extra_rotation, flip,
-                             mod_r, mod_g, mod_b, mod_a)) {
+        ((extra_rotation == E_MI_GFX_ROTATE_90 || extra_rotation == E_MI_GFX_ROTATE_270)
+             ? MMIYOO_TryDirectRotateCopy(data, src_texture_data, pixels, pitch, &src, &dst,
+                                          blend_mode, extra_rotation, flip,
+                                          mod_r, mod_g, mod_b, mod_a)
+             : MMIYOO_TryDirectCopy(data, src_texture_data, pixels, pitch, &src, &dst,
+                                    blend_mode, extra_rotation, flip,
+                                    mod_r, mod_g, mod_b, mod_a))) {
         return 0;
     }
 
