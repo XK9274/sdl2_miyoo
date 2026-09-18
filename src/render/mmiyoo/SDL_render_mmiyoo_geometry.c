@@ -667,8 +667,10 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
     int dst_y;
     Uint8 *base;
     SDL_Rect written;
+    uint32x4_t color_vec;
+    Uint32 col4;
     int row;
-    int col;
+    Uint32 col;
 
     if (!dst || dst->w <= 0 || dst->h <= 0) {
         return SDL_FALSE;
@@ -689,11 +691,17 @@ MMIYOO_TryDirectSpanFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 co
         dst_y = fb_h - dst->y - dst->h;
     }
 
+    /* Vectorized 4-pixels-per-store overwrite; scalar tail handles w % 4. */
+    color_vec = vdupq_n_u32(color);
+    col4 = (Uint32)dst->w & ~3u;
     base = (Uint8 *)vir;
     for (row = 0; row < dst->h; ++row) {
-        Uint32 *pixels = (Uint32 *)(base + (size_t)(dst_y + row) * stride + (size_t)dst_x * 4);
-        for (col = 0; col < dst->w; ++col) {
-            pixels[col] = color;
+        Uint8 *rowptr = base + (size_t)(dst_y + row) * stride + (size_t)dst_x * 4;
+        for (col = 0; col < col4; col += 4) {
+            vst1q_u32((Uint32 *)(rowptr + col * 4), color_vec);
+        }
+        for (; col < (Uint32)dst->w; col++) {
+            *(Uint32 *)(rowptr + col * 4) = color;
         }
     }
 
