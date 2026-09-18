@@ -89,6 +89,12 @@ typedef struct MMIYOO_TextureData {
     /* Read fresh on every copy, so changing it takes effect on the very
      * next draw call -- no renderer recreation needed. */
     MMIYOO_ScaleMode effective_scale_mode;
+
+    /* Set whenever GPU/DMA hardware writes into this texture; cleared right
+     * after the CPU actually invalidates and reads it. Starts dirty, since a
+     * reused pooled physical block can still carry a prior owner's stale
+     * GPU-written cache lines. */
+    SDL_bool gpu_dirty;
 } MMIYOO_TextureData;
 
 typedef struct MMIYOO_RenderData {
@@ -301,6 +307,7 @@ int MMIYOO_RunCommandQueue(SDL_Renderer *renderer, SDL_RenderCommand *cmd, void 
  * SetTextureScaleMode/DestroyTexture are also wired into the SDL_Renderer vtable by
  * MMIYOO_CreateRenderer) --- */
 void MMIYOO_FlushInvCacheRange(void *address, size_t size);
+void MMIYOO_MarkTargetGpuDirty(MMIYOO_RenderData *data);
 void MMIYOO_TexturePoolConfigure(SDL_bool enabled, size_t max_bytes);
 void MMIYOO_TexturePoolDrain(void);
 int MMIYOO_DMABlitTextureToTexture(MMIYOO_TextureData *src_texture, SDL_Rect *src_rect,

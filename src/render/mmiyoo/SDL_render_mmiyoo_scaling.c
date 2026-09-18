@@ -476,6 +476,7 @@ MMIYOO_TryHardwareScaleComposite(MMIYOO_RenderData *data, MMIYOO_TextureData *sr
         return SDL_FALSE;
     }
     GFX_AddTextureFence(fence);
+    MMIYOO_MarkTargetGpuDirty(data);
     return SDL_TRUE;
 }
 

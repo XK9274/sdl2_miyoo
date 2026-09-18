@@ -465,6 +465,7 @@ MMIYOO_ExecuteQuickFill(MMIYOO_RenderData *data, const SDL_Rect *dst, Uint32 col
     result = MI_GFX_QuickFill(&data->current_target_surface, &dst_rect, color, &fence);
     if (result == MI_SUCCESS) {
         GFX_AddTextureFence(fence);
+        MMIYOO_MarkTargetGpuDirty(data);
     } else {
         MMIYOO_LOG_WARN("QuickFill: MI_GFX_QuickFill failed (result=%d)", result);
     }
@@ -899,7 +900,10 @@ MMIYOO_TryDirectCopy(MMIYOO_RenderData *data, MMIYOO_TextureData *src_texture_da
     }
 
     src_origin = (const Uint8 *)src_pixels + (size_t)src->y * src_pitch + (size_t)src->x * 4;
-    MMIYOO_FlushInvCacheRange((void *)src_origin, (size_t)src->h * src_pitch);
+    if (src_texture_data->gpu_dirty) {
+        MMIYOO_FlushInvCacheRange((void *)src_origin, (size_t)src->h * src_pitch);
+        src_texture_data->gpu_dirty = SDL_FALSE;
+    }
 
     if (data->is_target_texture) {
         Uint8 *dst_row = dst_base + (size_t)dst_y * dst_stride + (size_t)dst_x * 4;
@@ -1107,6 +1111,7 @@ MMIYOO_ExecuteDrawLine(MMIYOO_RenderData *data,
     result = MI_GFX_DrawLine(&data->current_target_surface, &line, &fence);
     if (result == MI_SUCCESS) {
         GFX_AddTextureFence(fence);
+        MMIYOO_MarkTargetGpuDirty(data);
         return SDL_TRUE;
     }
 

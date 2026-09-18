@@ -169,10 +169,11 @@ int MMIYOO_DMABlitTextureToTexture(MMIYOO_TextureData *src_texture, SDL_Rect *sr
                                        MMIYOO_TextureData *dst_texture, SDL_Rect *dst_rect) {
     MI_SYS_FrameData_t src_frame, dst_frame;
     MI_SYS_WindowRect_t mi_src_rect, mi_dst_rect;
-    
+    int result;
+
     if (MMIYOO_TextureToFrameData(src_texture, &src_frame) != 0) return -1;
     if (MMIYOO_TextureToFrameData(dst_texture, &dst_frame) != 0) return -1;
-    
+
     mi_src_rect.u16X = src_rect ? src_rect->x : 0;
     mi_src_rect.u16Y = src_rect ? src_rect->y : 0;
     mi_src_rect.u16Width = src_rect ? src_rect->w : src_texture->width;
@@ -183,7 +184,28 @@ int MMIYOO_DMABlitTextureToTexture(MMIYOO_TextureData *src_texture, SDL_Rect *sr
     mi_dst_rect.u16Width = dst_rect ? dst_rect->w : dst_texture->width;
     mi_dst_rect.u16Height = dst_rect ? dst_rect->h : dst_texture->height;
 
-    return MI_SYS_BufBlitPa(&dst_frame, &mi_dst_rect, &src_frame, &mi_src_rect);
+    result = MI_SYS_BufBlitPa(&dst_frame, &mi_dst_rect, &src_frame, &mi_src_rect);
+    if (result == MI_SUCCESS) {
+        dst_texture->gpu_dirty = SDL_TRUE;
+    }
+    return result;
+}
+
+/* Marks a texture dirty directly rather than inferring it from fence state,
+ * since not every GPU-side write path that lands in a texture registers a
+ * fence. */
+void
+MMIYOO_MarkTargetGpuDirty(MMIYOO_RenderData *data)
+{
+    MMIYOO_TextureData *target_texture_data;
+
+    if (!data->is_target_texture || !data->boundTarget) {
+        return;
+    }
+    target_texture_data = (MMIYOO_TextureData *)data->boundTarget->driverdata;
+    if (target_texture_data) {
+        target_texture_data->gpu_dirty = SDL_TRUE;
+    }
 }
 
 /* Best-fit scan: smallest cached block with alloc_size >= requested_size,
@@ -313,6 +335,11 @@ int MMIYOO_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture)
     mmiyoo_texture->width = texture->w;
     mmiyoo_texture->height = texture->h;
     mmiyoo_texture->format = texture->format;
+
+    /* A pool-reused physical block can carry stale cache lines from its
+     * previous owner's GPU writes, so every texture starts dirty regardless
+     * of whether its memory is freshly allocated or reused. */
+    mmiyoo_texture->gpu_dirty = SDL_TRUE;
 
     /* SDL's own per-texture default is always Nearest unless the app set
      * SDL_HINT_RENDER_SCALE_QUALITY before creating it, so an explicit

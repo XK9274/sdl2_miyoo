@@ -865,6 +865,8 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
                            src_texture_data->colorkey_enabled, src_texture_data->colorkey_value);
     if (copy_result != 0) {
         MMIYOO_LOG_WARN("QueueCopy: GFX_Copy failed (result=%d)", copy_result);
+    } else {
+        MMIYOO_MarkTargetGpuDirty(data);
     }
     return 0;
 }
