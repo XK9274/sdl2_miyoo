@@ -789,9 +789,13 @@ static int MMIYOO_ExecuteCopyCommand(SDL_Renderer *renderer,
     }
 
     // DMA optimization: if both source and target are MI_SYS textures, use hardware blit
-    if (data->is_target_texture && data->boundTarget && blend_mode == SDL_BLENDMODE_NONE) {
+    // MI_SYS_BufBlitPa has no rotate/flip parameter -- restrict to the one
+    // case it's actually correct for, or a rotated/flipped draw silently
+    // loses its transform.
+    if (data->is_target_texture && data->boundTarget && blend_mode == SDL_BLENDMODE_NONE &&
+        extra_rotation == E_MI_GFX_ROTATE_0 && flip == SDL_FLIP_NONE) {
         dst_texture_data = (MMIYOO_TextureData *)data->boundTarget->driverdata;
-        
+
         if (dst_texture_data && dst_texture_data->phyAddr && src_texture_data->phyAddr) {
             if (MMIYOO_DMABlitTextureToTexture(src_texture_data, &src, dst_texture_data, &dst) == MI_SUCCESS) {
                 return 0;
